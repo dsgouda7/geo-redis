@@ -5,12 +5,14 @@ export interface AircraftPayload {
   heading?:        number | null;
   on_ground?:      boolean | null;
   origin_country?: string | null;
-  /**
-   * Last 1–3 positions [lat, lon], oldest first.
-   * Populated ONLY after a detail fetch from SQLite (zoom ≥ 9, < 5 aircraft).
-   * Absent in normal map markers.
-   */
   history?:        [number, number][];
+  // ── Weather-station extras (set by weather-server, absent for aircraft) ──
+  /** True when this entry comes from the weather server */
+  __is_weather?:   boolean;
+  /** Raw temperature °C */
+  temp_c?:         number | null;
+  /** WMO weather interpretation code (0=clear … 99=thunderstorm+hail) */
+  wmo_code?:       number | null;
 }
 
 export interface Aircraft {

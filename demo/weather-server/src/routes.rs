@@ -1,14 +1,14 @@
 use axum::{
     extract::{Path, Query, State},
+    response::sse::{Event, Sse},
     Json,
 };
+use futures_util::stream;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc, time::Duration};
 use s2::{cap::Cap, latlng::LatLng, point::Point, region::RegionCoverer, s1};
 use georedis::GeoEntry;
-use crate::{metar, AppState};
-
-// ── Response types ─────────────────────────────────────────────────────────
+use crate::{open_meteo, AppState};
 
 #[derive(Serialize)]
 pub struct AircraftResponse {
@@ -21,56 +21,35 @@ pub struct RegionParams {
     s: f64, w: f64, n: f64, e: f64,
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Payload mapping ────────────────────────────────────────────────────────
+// Map weather grid point → aircraft-compatible schema so the existing Leaflet
+// UI renders it. Extra fields (__is_weather, temp_c, wmo_code) are picked up
+// by the new weather icon component in the UI.
 
-/// Maps a weather station GeoEntry to the aircraft-compatible schema
-/// the Leaflet UI expects, so no UI changes are needed.
-///
-/// Colour scale (driven by altitude field):
-///   Hot  (+35°C+) → red/orange   (ground level)
-///   Warm (+20°C)  → yellow
-///   Cool (  0°C)  → green
-///   Cold (-20°C)  → cyan/blue
-///   Very cold (-40°C+) → purple  (high altitude)
 fn station_to_aircraft(mut e: GeoEntry) -> GeoEntry {
-    let icao      = e.payload["icao_id"].as_str().unwrap_or(&e.id).to_string();
-    let name      = e.payload["name"].as_str().unwrap_or("").to_string();
-    let temp_c    = e.payload["temp_c"].as_f64();
-    let wspd      = e.payload["wspd_kt"].as_f64();
-    let wdir      = e.payload["wdir"].as_u64().map(|d| d as f64);
-    let wx        = e.payload["wx_string"].as_str().unwrap_or("").to_string();
-    let clouds    = e.payload["clouds"].as_str().unwrap_or("").to_string();
-    let flt_cat   = e.payload["flt_cat"].as_str().unwrap_or("").to_string();
-
-    // Condition label shown in origin_country field: wx code if present, else cloud cover + flight category
-    let condition = if !wx.is_empty() {
-        format!("{wx}  {flt_cat}")
-    } else if !clouds.is_empty() {
-        format!("{clouds}  {flt_cat}")
-    } else {
-        flt_cat.clone()
-    };
-
-    // Altitude encodes temperature for colour display
-    let altitude = temp_c.map(metar::temp_to_altitude_m);
-
-    // Callsign = station name (readable) or ICAO if name is empty
-    let callsign = if !name.is_empty() { name } else { icao.clone() };
+    let name   = e.payload["name"].as_str().unwrap_or(&e.id).to_string();
+    let temp_c = e.payload["temp_c"].as_f64().unwrap_or(0.0);
+    let wspd   = e.payload["wspd_kt"].as_f64();
+    let wdir   = e.payload["wdir"].as_u64().map(|d| d as f64);
+    let wmo    = e.payload["wmo_code"].as_u64().unwrap_or(0) as u8;
 
     e.payload = serde_json::json!({
-        "callsign":       callsign,
-        "altitude":       altitude,
+        "callsign":       name,
+        // altitude encodes temperature for the colour scale (hot=red, cold=purple)
+        "altitude":       open_meteo::temp_to_altitude_m(temp_c),
         "velocity":       wspd,
         "heading":        wdir,
         "on_ground":      false,
-        "origin_country": condition,
+        "origin_country": format!("{} {}", open_meteo::wmo_emoji(wmo), open_meteo::wmo_label(wmo)),
+        // UI-specific extras
+        "__is_weather":   true,
         "temp_c":         temp_c,
-        "icao_id":        icao,
+        "wmo_code":       wmo,
     });
     e
 }
 
-// ── Route handlers ─────────────────────────────────────────────────────────
+// ── Handlers ───────────────────────────────────────────────────────────────
 
 pub async fn all_stations(State(st): State<Arc<AppState>>) -> Json<AircraftResponse> {
     let entries = st.trie.read().await.all_entries()
@@ -95,24 +74,23 @@ pub async fn station_detail(
     Path(id):  Path<String>,
 ) -> Json<serde_json::Value> {
     match st.db.get_detail(&id).await {
-        Ok(Some(d)) => Json(serde_json::json!({
-            "id":             d.id,
-            "callsign":       if d.name.is_empty() { &d.id } else { &d.name },
-            "origin_country": format!("{} {} {}", d.wx_string, d.clouds, d.flt_cat).trim().to_string(),
-            "altitude":       d.temp_c.map(metar::temp_to_altitude_m),
-            "velocity":       d.wspd_kt,
-            "heading":        d.wdir,
-            "on_ground":      false,
-            "history":        d.history,
-            // extra weather fields for completeness
-            "temp_c":         d.temp_c,
-            "dewp_c":         d.dewp_c,
-        })),
-        Ok(None) => Json(serde_json::json!({ "error": "not found" })),
-        Err(e)   => {
-            tracing::error!("detail query: {e}");
-            Json(serde_json::json!({ "error": "internal error" }))
+        Ok(Some(d)) => {
+            let temp = d.temp_c.unwrap_or(0.0);
+            Json(serde_json::json!({
+                "id":             d.id,
+                "callsign":       if d.name.is_empty() { &d.id } else { &d.name },
+                "origin_country": d.wx_string,
+                "altitude":       open_meteo::temp_to_altitude_m(temp),
+                "velocity":       d.wspd_kt,
+                "heading":        d.wdir,
+                "on_ground":      false,
+                "history":        d.history,
+                "__is_weather":   true,
+                "temp_c":         temp,
+            }))
         }
+        Ok(None) => Json(serde_json::json!({ "error": "not found" })),
+        Err(e)   => { tracing::error!("detail: {e}"); Json(serde_json::json!({ "error": "internal error" })) }
     }
 }
 
@@ -121,7 +99,7 @@ pub async fn get_metrics(State(st): State<Arc<AppState>>) -> Json<serde_json::Va
     let trie_size = st.trie.read().await.len();
     let last_sync = *st.last_sync.read().await;
     Json(serde_json::json!({
-        "source":    "aviationweather.gov (METAR)",
+        "source":    "Open-Meteo (global 10° grid)",
         "metrics":   snapshot,
         "trie_size": trie_size,
         "last_sync": last_sync,
@@ -129,7 +107,24 @@ pub async fn get_metrics(State(st): State<Arc<AppState>>) -> Json<serde_json::Va
 }
 
 pub async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ok", "source": "METAR" }))
+    Json(serde_json::json!({ "status": "ok", "source": "Open-Meteo" }))
+}
+
+/// GET /api/stream — SSE endpoint.
+/// Fires an "update" event after every successful weather poll so the browser
+/// can refresh immediately rather than polling on a fixed timer.
+pub async fn sse_stream(
+    State(st): State<Arc<AppState>>,
+) -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
+    let rx = st.updates.subscribe();
+    let s = stream::unfold(rx, |mut rx| async move {
+        let event = match tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
+            Ok(Ok(_)) => Event::default().event("update").data("new"),
+            _         => Event::default().event("keepalive").data(""),
+        };
+        Some((Ok::<Event, Infallible>(event), rx))
+    });
+    Sse::new(s).keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(25)))
 }
 
 // ── S2 viewport helper ─────────────────────────────────────────────────────

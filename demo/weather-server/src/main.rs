@@ -1,11 +1,11 @@
 mod config;
 mod db;
-mod metar;
+mod open_meteo;
 mod routes;
 
 use std::sync::Arc;
 use axum::{routing::get, Router};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::CorsLayer;
 use georedis::{GeoEntry, GeoTrie, Metrics, RedisStore};
 use config::Config;
@@ -16,6 +16,9 @@ pub struct AppState {
     pub config:    Config,
     pub last_sync: RwLock<Option<u64>>,
     pub db:        Arc<db::Db>,
+    /// Broadcast channel — fires after every successful poll.
+    /// SSE clients subscribe to be notified when fresh data is available.
+    pub updates:   broadcast::Sender<()>,
 }
 
 #[tokio::main]
@@ -29,18 +32,20 @@ async fn main() -> anyhow::Result<()> {
     let metrics  = Metrics::new();
     let store    = RedisStore::with_config(&cfg.redis_url, Arc::clone(&metrics), cfg.entity_ttl_secs)?;
     let database = Arc::new(db::Db::open(&cfg.sqlite_path)?);
+    let (tx, _)  = broadcast::channel::<()>(16);
 
-    tracing::info!("Source: Aviation Weather Center — METAR (no key required)");
-    tracing::info!("Redis:  {} (DB isolated per server)", cfg.redis_url);
+    tracing::info!("Source: Open-Meteo (global 10° grid — no API key required)");
+    tracing::info!("Redis:  {}", cfg.redis_url);
     tracing::info!("SQLite: {}", cfg.sqlite_path);
     tracing::info!("S2 level: {}, poll interval: {}s", cfg.s2_level, cfg.poll_interval_secs);
 
     let state = Arc::new(AppState {
-        trie:      RwLock::new(GeoTrie::new(cfg.s2_level)),
+        trie:    RwLock::new(GeoTrie::new(cfg.s2_level)),
         store,
-        config:    cfg.clone(),
+        config:  cfg.clone(),
         last_sync: RwLock::new(None),
-        db:        database,
+        db:      database,
+        updates: tx,
     });
 
     // ── Background poller ─────────────────────────────────────────────────
@@ -49,24 +54,24 @@ async fn main() -> anyhow::Result<()> {
         let http = reqwest::Client::new();
         let mut poll_count: u32 = 0;
         loop {
-            tracing::info!("Fetching METAR observations…");
-            match metar::fetch_stations(&http).await {
+            tracing::info!("Fetching Open-Meteo global weather grid…");
+            match open_meteo::fetch_stations(&http).await {
                 Ok(stations) => {
                     let n = stations.len();
 
                     // 1. Persist to SQLite
                     let db_data: Vec<db::StationData> = stations.iter().map(|s| db::StationData {
-                        id:        s.icao_id.clone(),
+                        id:        s.id.clone(),
                         lat:       s.lat,
                         lon:       s.lon,
                         name:      s.name.clone(),
-                        temp_c:    s.temp_c,
-                        dewp_c:    s.dewp_c,
-                        wdir:      s.wdir,
-                        wspd_kt:   s.wspd_kt,
-                        wx_string: s.wx_string.clone(),
-                        clouds:    s.clouds.clone(),
-                        flt_cat:   s.flt_cat.clone(),
+                        temp_c:    Some(s.temp_c),
+                        dewp_c:    None,
+                        wdir:      Some(s.wdir),
+                        wspd_kt:   Some(s.wspd_kt),
+                        wx_string: format!("{} {}", open_meteo::wmo_emoji(s.wmo_code), open_meteo::wmo_label(s.wmo_code)),
+                        clouds:    String::new(),
+                        flt_cat:   String::new(),
                     }).collect();
                     if let Err(e) = poll_state.db.upsert_batch(db_data).await {
                         tracing::error!("SQLite upsert failed: {e}");
@@ -78,19 +83,17 @@ async fn main() -> anyhow::Result<()> {
                         trie.clear();
                         for s in &stations {
                             trie.insert(GeoEntry {
-                                id:  s.icao_id.clone(),
+                                id:  s.id.clone(),
                                 lat: s.lat,
                                 lon: s.lon,
                                 payload: serde_json::json!({
-                                    "icao_id":   s.icao_id,
                                     "name":      s.name,
                                     "temp_c":    s.temp_c,
-                                    "dewp_c":    s.dewp_c,
-                                    "wdir":      s.wdir,
                                     "wspd_kt":   s.wspd_kt,
-                                    "wx_string": s.wx_string,
-                                    "clouds":    s.clouds,
-                                    "flt_cat":   s.flt_cat,
+                                    "wdir":      s.wdir,
+                                    "wmo_code":  s.wmo_code,
+                                    "precip":    s.precip,
+                                    "__is_weather": true,
                                 }),
                             });
                         }
@@ -107,7 +110,10 @@ async fn main() -> anyhow::Result<()> {
                     let ts = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                     *poll_state.last_sync.write().await = Some(ts);
-                    tracing::info!("Synced {n} weather stations to trie + Redis");
+                    tracing::info!("Synced {n} weather grid points to trie + Redis");
+
+                    // 4. Notify all SSE clients that fresh data is ready
+                    let _ = poll_state.updates.send(());
 
                     poll_count += 1;
                     if poll_count % 6 == 0 {
@@ -116,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-                Err(e) => tracing::error!("METAR fetch failed: {e}"),
+                Err(e) => tracing::error!("Open-Meteo fetch failed: {e}"),
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(
                 poll_state.config.poll_interval_secs,
@@ -130,6 +136,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/aircraft/:id", get(routes::station_detail))
         .route("/api/region",       get(routes::region_stations))
         .route("/api/metrics",      get(routes::get_metrics))
+        .route("/api/stream",       get(routes::sse_stream))
         .route("/health",           get(routes::health))
         .layer(CorsLayer::permissive())
         .with_state(Arc::clone(&state));

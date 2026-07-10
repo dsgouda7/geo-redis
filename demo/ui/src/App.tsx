@@ -7,7 +7,6 @@ import AircraftMarker from './components/AircraftMarker';
 import AircraftPanel from './components/AircraftPanel';
 import MetricsPanel from './components/MetricsPanel';
 import 'leaflet/dist/leaflet.css';
-
 const REGION_ZOOM = 6;   // switch to Redis region query above this zoom
 const DETAIL_ZOOM = 9;   // fetch SQLite detail below this count
 const DETAIL_MAX  = 5;   // only fetch detail when <= this many aircraft in view
@@ -44,9 +43,11 @@ export default function App() {
   const [metrics,  setMetrics]  = useState<MetricsResponse | null>(null);
   const [status,   setStatus]   = useState('Loading live aircraft...');
   const [selected, setSelected] = useState<string | null>(null);
-  const mapRef = useRef<LeafletMap | null>(null);
+  const mapRef        = useRef<LeafletMap | null>(null);
+  const lastBoundsRef = useRef<[number,number,number,number,number] | null>(null);
 
   const handleBounds = useCallback(async (s:number, w:number, n:number, e:number, zoom:number) => {
+    lastBoundsRef.current = [s, w, n, e, zoom];
     try {
       const { s: cs, w: cw, n: cn, e: ce } = clampBounds(s, w, n, e);
       let res;
@@ -95,12 +96,26 @@ export default function App() {
     mapRef.current?.flyTo([a.lat, a.lon], Math.max(mapRef.current.getZoom(), 9), { animate: true, duration: 0.8 });
   }, []);
 
+  // Metrics poller (every 10s)
   useEffect(() => {
     const poll = async () => { try { setMetrics(await fetchMetrics()); } catch { /**/ } };
     void poll();
     const id = setInterval(poll, 10_000);
     return () => clearInterval(id);
   }, []);
+
+  // SSE subscription — weather server pushes "update" after each poll.
+  useEffect(() => {
+    const es = new EventSource('/api/stream');
+    es.addEventListener('update', () => {
+      if (lastBoundsRef.current) {
+        void handleBounds(...lastBoundsRef.current);
+      }
+    });
+    // If /api/stream errors (e.g. aircraft server with no SSE), just close quietly
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, [handleBounds]);
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#020617' }}>

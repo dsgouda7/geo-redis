@@ -37,6 +37,60 @@ function makeGroundIcon(size = 18): L.DivIcon {
   });
 }
 
+// ── Weather station icon ───────────────────────────────────────────────────
+
+const WMO_EMOJI: Record<number, string> = {
+  0:'☀️', 1:'🌤️', 2:'⛅', 3:'☁️',
+  45:'🌫️', 48:'🌫️',
+  51:'🌦️', 53:'🌦️', 55:'🌧️',
+  61:'🌧️', 63:'🌧️', 65:'🌧️', 66:'🌨️', 67:'🌨️',
+  71:'❄️', 73:'❄️', 75:'❄️', 77:'🌨️',
+  80:'🌦️', 81:'🌦️', 82:'🌧️',
+  85:'🌨️', 86:'🌨️',
+  95:'⛈️', 96:'⛈️', 99:'⛈️',
+};
+
+function getTempColor(tempC: number): string {
+  if (tempC >= 35) return '#ef4444';   // red    — very hot
+  if (tempC >= 25) return '#f97316';   // orange — hot
+  if (tempC >= 15) return '#eab308';   // yellow — warm
+  if (tempC >=  5) return '#22c55e';   // green  — mild
+  if (tempC >= -5) return '#06b6d4';   // cyan   — cool
+  if (tempC >=-20) return '#3b82f6';   // blue   — cold
+  return '#a855f7';                    // purple — very cold
+}
+
+function makeWeatherIcon(wmoCode: number, tempC: number, windDir: number | null | undefined): L.DivIcon {
+  const emoji  = WMO_EMOJI[wmoCode] ?? '🌡️';
+  const bg     = getTempColor(tempC);
+  const temp   = Math.round(tempC);
+  const sign   = temp > 0 ? '+' : '';
+  const wdArrow = windDir != null
+    ? `<div style="position:absolute;top:1px;right:2px;font-size:9px;line-height:1;transform:rotate(${windDir}deg)">↑</div>`
+    : '';
+  const html = `<div style="
+      position:relative;
+      width:38px;height:38px;
+      background:${bg};
+      border-radius:50%;
+      display:flex;flex-direction:column;
+      align-items:center;justify-content:center;
+      border:1.5px solid rgba(255,255,255,0.5);
+      box-shadow:0 2px 6px rgba(0,0,0,0.55);
+      line-height:1;
+    ">
+    ${wdArrow}
+    <span style="font-size:17px">${emoji}</span>
+    <span style="font-size:8px;font-weight:700;color:#fff;margin-top:1px;text-shadow:0 1px 2px rgba(0,0,0,0.7)">${sign}${temp}°</span>
+  </div>`;
+  return L.divIcon({
+    html, className: '',
+    iconSize:      [38, 38],
+    iconAnchor:    [19, 19],
+    tooltipAnchor: [22, -19],
+  });
+}
+
 interface Props {
   aircraft: Aircraft;
   onClick?: (a: Aircraft) => void;
@@ -44,6 +98,52 @@ interface Props {
 
 export default function AircraftMarker({ aircraft, onClick }: Props) {
   const { id, lat, lon, payload } = aircraft;
+
+  // ── Weather station branch ─────────────────────────────────────────────
+  const isWeather = payload.__is_weather === true;
+
+  const weatherIcon = useMemo(() => {
+    if (!isWeather) return null;
+    return makeWeatherIcon(payload.wmo_code ?? 0, payload.temp_c ?? 0, payload.heading);
+  }, [isWeather, payload.wmo_code, payload.temp_c, payload.heading]);
+
+  if (isWeather && weatherIcon) {
+    const tempC   = payload.temp_c ?? 0;
+    const tempCol = getTempColor(tempC);
+    const emoji   = WMO_EMOJI[payload.wmo_code ?? 0] ?? '🌡️';
+    return (
+      <Marker
+        position={[lat, lon]}
+        icon={weatherIcon}
+        eventHandlers={{ click: () => onClick?.(aircraft) }}
+      >
+        <Tooltip sticky direction="top" offset={[0, -4]} opacity={1}>
+          <div style={{
+            background: '#0f172a', color: '#f1f5f9',
+            borderRadius: 8, padding: '10px 13px',
+            minWidth: 200, fontSize: 12, lineHeight: 1.8,
+            border: `1px solid ${tempCol}55`,
+            boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${tempCol}33`,
+          }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', marginBottom: 4 }}>
+              {emoji} {payload.callsign ?? id}
+            </div>
+            <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>
+              {payload.origin_country ?? '—'}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 16px' }}>
+              <WStat label="Temp"      value={`${Math.round(tempC > 0 ? tempC : tempC)}°C`} color={tempCol} />
+              <WStat label="Wind"      value={payload.velocity != null ? `${Math.round(payload.velocity)} kt` : '—'} />
+              <WStat label="Direction" value={payload.heading != null ? `${Math.round(payload.heading)}°` : 'Variable'} />
+              <WStat label="Grid pt"   value={id} />
+            </div>
+          </div>
+        </Tooltip>
+      </Marker>
+    );
+  }
+
+  // ── Aircraft branch (original) ─────────────────────────────────────────
   const color = getAltitudeColor(payload);
   const type  = getAircraftType(payload);
 
@@ -158,6 +258,15 @@ export default function AircraftMarker({ aircraft, onClick }: Props) {
 }
 
 function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div>
+      <span style={{ color: '#64748b', fontSize: 10 }}>{label}</span>
+      <div style={{ color: color ?? '#e2e8f0', fontWeight: 600, fontSize: 12 }}>{value}</div>
+    </div>
+  );
+}
+
+function WStat({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div>
       <span style={{ color: '#64748b', fontSize: 10 }}>{label}</span>
