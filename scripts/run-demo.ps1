@@ -29,7 +29,7 @@ if (-not (Test-Path demo/ui/node_modules)) {
 
 # ── Build Rust binaries ───────────────────────────────────────────────────
 Write-Host "Building backends (first build may take ~60s)..." -ForegroundColor Yellow
-cargo build --release -p georedis-demo -p georedis-adsb
+cargo build --release -p georedis-demo -p georedis-weather
 if ($LASTEXITCODE -ne 0) { Write-Error "Build failed"; exit 1 }
 
 # ── Load .env into current session ───────────────────────────────────────
@@ -47,13 +47,13 @@ $p0 = Start-Process -FilePath ".\target\release\georedis-demo.exe" `
     -RedirectStandardError  ".\target\demo-stderr.log" `
     -PassThru -NoNewWindow
 
-# ── ADSB server — port 3001, Redis DB 1 ──────────────────────────────────
-Write-Host "Starting ADSB demo server     →  :3001" -ForegroundColor Yellow
-$env:SERVER_PORT = "3001"; $env:SQLITE_PATH = "georedis-adsb.db"
+# ── Weather server — port 3001, Redis DB 1 ────────────────────────────────────
+Write-Host "Starting METAR weather server  →  :3001" -ForegroundColor Yellow
+$env:SERVER_PORT = "3001"; $env:SQLITE_PATH = "georedis-weather.db"
 $env:REDIS_URL   = "redis://127.0.0.1:6379/1"
-$p1 = Start-Process -FilePath ".\target\release\georedis-adsb.exe" `
-    -RedirectStandardOutput ".\target\adsb-stdout.log" `
-    -RedirectStandardError  ".\target\adsb-stderr.log" `
+$p1 = Start-Process -FilePath ".\target\release\georedis-weather.exe" `
+    -RedirectStandardOutput ".\target\weather-stdout.log" `
+    -RedirectStandardError  ".\target\weather-stderr.log" `
     -PassThru -NoNewWindow
 
 Start-Sleep -Seconds 3
@@ -62,18 +62,18 @@ Start-Sleep -Seconds 3
 Write-Host "Starting UI dev servers..." -ForegroundColor Yellow
 Push-Location demo/ui
 $ui0 = Start-Process -FilePath "npm" -ArgumentList "run","dev"      -PassThru -NoNewWindow
-$ui1 = Start-Process -FilePath "npm" -ArgumentList "run","dev:adsb" -PassThru -NoNewWindow
+$ui1 = Start-Process -FilePath "npm" -ArgumentList "run","dev:weather" -PassThru -NoNewWindow
 Pop-Location
 
 Start-Sleep -Seconds 3
 
 Write-Host ""
-Write-Host "  ┌────────────────────────────────────────────────┐" -ForegroundColor Cyan
-Write-Host "  │  OpenSky tracker  →  http://localhost:5173     │" -ForegroundColor Cyan
-Write-Host "  │  ADSB demo        →  http://localhost:5174     │" -ForegroundColor Cyan
-Write-Host "  └────────────────────────────────────────────────┘" -ForegroundColor Cyan
+Write-Host "  ┌──────────────────────────────────────────────────┐" -ForegroundColor Cyan
+Write-Host "  │  OpenSky tracker    →  http://localhost:5173     │" -ForegroundColor Cyan
+Write-Host "  │  Live METAR weather →  http://localhost:5174     │" -ForegroundColor Cyan
+Write-Host "  └──────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Logs: target/demo-stdout.log  target/adsb-stdout.log" -ForegroundColor DarkGray
+Write-Host "Logs: target/demo-stdout.log  target/weather-stdout.log" -ForegroundColor DarkGray
 Write-Host "Press Ctrl+C to stop everything." -ForegroundColor Gray
 
 try {

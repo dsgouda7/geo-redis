@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev":      "vite",
-    "dev:adsb": "vite --config vite.adsb.config.ts",
-    "build":   "tsc && vite build",
-    "preview": "vite preview"
+    "dev":         "vite",
+    "dev:weather": "vite --config vite.weather.config.ts",
+    "build":       "tsc && vite build",
+    "preview":     "vite preview"
   },
   "dependencies": {
     "leaflet":       "^1.9.4",
