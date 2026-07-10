@@ -6,14 +6,17 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const fetchAllAircraft = () =>
-  get<import('../types').AircraftResponse>('/api/aircraft');
+export const fetchAllAircraft = (zoom?: number) =>
+  get<import('../types').AircraftResponse>(
+    zoom != null ? `/api/aircraft?zoom=${zoom}` : '/api/aircraft'
+  );
 
 export const fetchMetrics = () =>
   get<import('../types').MetricsResponse>('/api/metrics');
 
-export function fetchRegion(s: number, w: number, n: number, e: number) {
-  return get<import('../types').AircraftResponse>(`/api/region?s=${s}&w=${w}&n=${n}&e=${e}`);
+export function fetchRegion(s: number, w: number, n: number, e: number, zoom?: number) {
+  const base = `/api/region?s=${s}&w=${w}&n=${n}&e=${e}`;
+  return get<import('../types').AircraftResponse>(zoom != null ? `${base}&zoom=${zoom}` : base);
 }
 
 export interface AircraftDetail {

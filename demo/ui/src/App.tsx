@@ -53,10 +53,10 @@ export default function App() {
       const { s: cs, w: cw, n: cn, e: ce } = clampBounds(s, w, n, e);
       let res;
       if (zoom >= REGION_ZOOM) {
-        res = await fetchRegion(cs, cw, cn, ce);
+        res = await fetchRegion(cs, cw, cn, ce, zoom);
         setStatus(`${res.count.toLocaleString()} aircraft · Redis S2 region · zoom ${zoom} · ${new Date().toLocaleTimeString()}`);
       } else {
-        res = await fetchAllAircraft();
+        res = await fetchAllAircraft(zoom);
         setStatus(`${res.count.toLocaleString()} aircraft worldwide · zoom in for region query`);
       }
 

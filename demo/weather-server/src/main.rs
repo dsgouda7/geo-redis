@@ -35,6 +35,12 @@ pub struct AppState {
     pub db:        Arc<db::Db>,
     pub updates:   broadcast::Sender<StationEvent>,
     pub positions: RwLock<HashMap<String, (f64, f64)>>,
+    /// All raw METAR observations from the latest download.
+    /// Used for zoom-aware on-demand aggregation by the region endpoint.
+    pub raw_stations:    RwLock<Vec<metar_bulk::BulkMETAR>>,
+    /// Pre-computed cluster tiers keyed by S2 level (2, 3, 4, 5).
+    /// Rebuilt after every METAR download so all zoom levels are always fresh.
+    pub cached_clusters: RwLock<HashMap<u8, Vec<aggregate::Cluster>>>,
 }
 
 #[tokio::main]
@@ -57,13 +63,15 @@ async fn main() -> anyhow::Result<()> {
         cfg.s2_level, cfg.poll_interval_secs, cfg.stream_rate_ms, cfg.max_clusters);
 
     let state = Arc::new(AppState {
-        trie:      RwLock::new(GeoTrie::new(cfg.s2_level)),
+        trie:            RwLock::new(GeoTrie::new(cfg.s2_level)),
         store,
-        config:    cfg.clone(),
-        last_sync: RwLock::new(None),
-        db:        database,
-        updates:   tx,
-        positions: RwLock::new(HashMap::new()),
+        config:          cfg.clone(),
+        last_sync:       RwLock::new(None),
+        db:              database,
+        updates:         tx,
+        positions:       RwLock::new(HashMap::new()),
+        raw_stations:    RwLock::new(Vec::new()),
+        cached_clusters: RwLock::new(HashMap::new()),
     });
 
     let poll_state = Arc::clone(&state);
@@ -97,7 +105,20 @@ async fn main() -> anyhow::Result<()> {
                         tracing::error!("SQLite upsert: {e}");
                     }
 
-                    // ── 2. Aggregate into ≤ max_clusters spatial clusters ──
+                    // ── 2. Store raw stations + pre-compute all cluster tiers ─
+                    // This makes zoom-aware drill-down instant — each level is
+                    // computed once per download, not on every request.
+                    *poll_state.raw_stations.write().await = stations.clone();
+                    {
+                        let mut cache = poll_state.cached_clusters.write().await;
+                        for level in [2u8, 3, 4, 5] {
+                            let clusters = aggregate::aggregate(&stations, usize::MAX, Some(level));
+                            tracing::debug!("Cached {} clusters at S2 level {}", clusters.len(), level);
+                            cache.insert(level, clusters);
+                        }
+                    }
+
+                    // ── 3. Aggregate into ≤ max_clusters spatial clusters ──
                     let clusters = aggregate::aggregate(
                         &stations,
                         poll_state.config.max_clusters,

@@ -17,8 +17,86 @@ pub struct AircraftResponse {
 }
 
 #[derive(Deserialize)]
+pub struct AircraftParams {
+    zoom: Option<u8>,
+}
+
+#[derive(Deserialize)]
 pub struct RegionParams {
     s: f64, w: f64, n: f64, e: f64,
+    zoom: Option<u8>,
+}
+
+// ── Zoom → S2 level mapping ────────────────────────────────────────────────
+//
+//  Leaflet zoom │ S2 level │ approx cluster count │ coverage
+//  ─────────────┼──────────┼─────────────────────┼──────────────
+//      0 – 3    │    2     │  ~76                 │ continents
+//      4 – 5    │    3     │  ~200–300            │ countries
+//      6 – 7    │    4     │  ~400–600            │ regions/states
+//      8 – 9    │    5     │  ~800–1 500          │ sub-regions
+//      10 +     │  raw     │  individual stations │ city view
+//
+const RAW_LEVEL: u8 = 99; // sentinel — means "return raw stations"
+
+fn zoom_to_s2_level(map_zoom: u8) -> u8 {
+    match map_zoom {
+        0..=3  => 2,
+        4..=5  => 3,
+        6..=7  => 4,
+        8..=9  => 5,
+        _      => RAW_LEVEL,
+    }
+}
+
+/// Convert a Cluster into a GeoEntry with the weather payload schema.
+fn cluster_to_geo_entry(c: &crate::aggregate::Cluster) -> GeoEntry {
+    GeoEntry {
+        id:  c.id.clone(),
+        lat: c.lat,
+        lon: c.lon,
+        payload: serde_json::json!({
+            "name":         c.id,
+            "temp_c":       c.temp_c,
+            "feels_like_c": null,
+            "humidity_pct": null,
+            "wspd_kt":      c.wind_spd,
+            "gust_kt":      null,
+            "wdir":         c.wind_dir,
+            "wmo_code":     c.wmo_code,
+            "precip":       null,
+            "cloud_pct":    null,
+            "pressure_hpa": null,
+            "flt_cat":      c.flt_cat,
+            "count":        c.count,
+            "__is_weather": true,
+        }),
+    }
+}
+
+/// Convert a raw BulkMETAR station into a GeoEntry.
+fn raw_to_geo_entry(s: &crate::metar_bulk::BulkMETAR) -> GeoEntry {
+    GeoEntry {
+        id:  s.icao_id.clone(),
+        lat: s.lat,
+        lon: s.lon,
+        payload: serde_json::json!({
+            "name":         s.icao_id,
+            "temp_c":       s.temp_c,
+            "feels_like_c": null,
+            "humidity_pct": null,
+            "wspd_kt":      s.wind_spd,
+            "gust_kt":      s.wind_gst,
+            "wdir":         s.wind_dir,
+            "wmo_code":     crate::metar_bulk::wx_to_wmo(&s.wx, &s.sky),
+            "precip":       null,
+            "cloud_pct":    null,
+            "pressure_hpa": null,
+            "flt_cat":      s.flt_cat,
+            "count":        1u32,
+            "__is_weather": true,
+        }),
+    }
 }
 
 // ── Payload mapping ────────────────────────────────────────────────────────
@@ -76,7 +154,31 @@ fn station_to_aircraft(mut e: GeoEntry) -> GeoEntry {
 
 // ── Handlers ───────────────────────────────────────────────────────────────
 
-pub async fn all_stations(State(st): State<Arc<AppState>>) -> Json<AircraftResponse> {
+pub async fn all_stations(
+    State(st): State<Arc<AppState>>,
+    Query(p):  Query<AircraftParams>,
+) -> Json<AircraftResponse> {
+    let s2 = zoom_to_s2_level(p.zoom.unwrap_or(2));
+
+    if s2 == RAW_LEVEL {
+        // Zoom 10+: return up to 500 raw stations sampled evenly
+        let raw = st.raw_stations.read().await;
+        let step = (raw.len() / 500).max(1);
+        let entries: Vec<GeoEntry> = raw.iter().step_by(step)
+            .map(|s| station_to_aircraft(raw_to_geo_entry(s)))
+            .collect();
+        return Json(AircraftResponse { count: entries.len(), aircraft: entries });
+    }
+
+    let cache = st.cached_clusters.read().await;
+    if let Some(clusters) = cache.get(&s2) {
+        let entries: Vec<GeoEntry> = clusters.iter()
+            .map(|c| station_to_aircraft(cluster_to_geo_entry(c)))
+            .collect();
+        return Json(AircraftResponse { count: entries.len(), aircraft: entries });
+    }
+
+    // Fallback: trie-based response (initial load before cache is ready)
     let entries = st.trie.read().await.all_entries()
         .into_iter().map(station_to_aircraft).collect::<Vec<_>>();
     Json(AircraftResponse { count: entries.len(), aircraft: entries })
@@ -86,11 +188,35 @@ pub async fn region_stations(
     State(st): State<Arc<AppState>>,
     Query(p):  Query<RegionParams>,
 ) -> Json<AircraftResponse> {
-    let tokens = viewport_tokens(p.s, p.w, p.n, p.e, st.config.s2_level);
-    let entries = match st.store.query_region(&tokens).await {
-        Ok(v)  => v.into_iter().map(station_to_aircraft).collect(),
-        Err(e) => { tracing::error!("region query: {e}"); vec![] }
+    let s2 = zoom_to_s2_level(p.zoom.unwrap_or(8));
+
+    let raw = st.raw_stations.read().await;
+
+    // If raw data isn't loaded yet, fall back to trie-based region query
+    if raw.is_empty() {
+        let tokens = viewport_tokens(p.s, p.w, p.n, p.e, st.config.s2_level);
+        let entries = match st.store.query_region(&tokens).await {
+            Ok(v)  => v.into_iter().map(station_to_aircraft).collect(),
+            Err(e) => { tracing::error!("region query: {e}"); vec![] }
+        };
+        return Json(AircraftResponse { count: entries.len(), aircraft: entries });
+    }
+
+    // Filter raw stations to viewport
+    let in_view: Vec<&crate::metar_bulk::BulkMETAR> = raw.iter()
+        .filter(|s| s.lat >= p.s && s.lat <= p.n && s.lon >= p.w && s.lon <= p.e)
+        .collect();
+
+    let entries: Vec<GeoEntry> = if s2 == RAW_LEVEL {
+        // Zoom 10+: individual stations
+        in_view.iter().map(|s| station_to_aircraft(raw_to_geo_entry(s))).collect()
+    } else {
+        // Aggregate to the zoom-appropriate level
+        let owned: Vec<crate::metar_bulk::BulkMETAR> = in_view.into_iter().cloned().collect();
+        let clusters = crate::aggregate::aggregate(&owned, usize::MAX, Some(s2));
+        clusters.iter().map(|c| station_to_aircraft(cluster_to_geo_entry(c))).collect()
     };
+
     Json(AircraftResponse { count: entries.len(), aircraft: entries })
 }
 
