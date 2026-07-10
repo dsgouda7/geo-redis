@@ -1,48 +1,103 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# georedis — unified demo launcher (Linux / macOS)
+#
+# Usage:
+#   ./scripts/run-demo.sh                   # starts all servers + UIs
+#   ./scripts/run-demo.sh --with-cluster    # also spins up the 4-node geo cluster
+#   ./scripts/run-demo.sh --skip-build      # reuse existing binaries
 
+set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# ── prerequisites ─────────────────────────────────────────────────────────
+WITH_CLUSTER=0; SKIP_BUILD=0
+for arg in "$@"; do
+  case $arg in
+    --with-cluster) WITH_CLUSTER=1 ;;
+    --skip-build)   SKIP_BUILD=1   ;;
+  esac
+done
+
+info() { echo -e "\033[36m$*\033[0m"; }
+ok()   { echo -e "\033[32m  ✓ $*\033[0m"; }
+
+# ── Prerequisites ─────────────────────────────────────────────────────────
 for cmd in cargo node npm docker; do
-    command -v "$cmd" >/dev/null 2>&1 || { echo "Error: $cmd not found"; exit 1; }
+  command -v "$cmd" &>/dev/null || { echo "Required: '$cmd' not in PATH"; exit 1; }
 done
 
 # ── .env ──────────────────────────────────────────────────────────────────
-[ -f .env ] || cp .env.example .env
+[[ -f .env ]] || { cp config/.env.example .env; ok "Created .env"; }
 
 # ── Redis ─────────────────────────────────────────────────────────────────
-echo "Starting Redis..."
+info "Starting Redis..."
 docker compose -f demo/docker-compose.yml up -d
 sleep 2
 
-# ── UI deps ───────────────────────────────────────────────────────────────
-[ -d demo/ui/node_modules ] || (cd demo/ui && npm install)
+# ── Optional: geo-node cluster ────────────────────────────────────────────
+if [[ $WITH_CLUSTER -eq 1 ]]; then
+  info "Building + starting 4-node geo cluster..."
+  docker compose -f demo/cluster-compose.yml build -q
+  docker compose -f demo/cluster-compose.yml up -d
+  sleep 6
+fi
 
-# ── source .env ───────────────────────────────────────────────────────────
-set -a; source .env; set +a
+# ── npm install ───────────────────────────────────────────────────────────
+for dir in demo/ui demo/cluster-ui; do
+  [[ -d "$dir/node_modules" ]] || { info "Installing $dir deps..."; (cd "$dir" && npm install --silent); }
+done
 
-# ── Rust backend ──────────────────────────────────────────────────────────
-echo "Building + starting backend (first build may take ~60s)..."
-cargo run --release -p georedis-demo &
-BACKEND=$!
+# ── Build Rust binaries ───────────────────────────────────────────────────
+if [[ $SKIP_BUILD -eq 0 ]]; then
+  info "Building backends (first build ~60s)..."
+  cargo build --release -p georedis-demo -p georedis-weather
+fi
 
-# ── Vite UI ───────────────────────────────────────────────────────────────
-echo "Starting UI dev server..."
-(cd demo/ui && npm run dev) &
-UI=$!
+mkdir -p target
+
+# ── Servers ───────────────────────────────────────────────────────────────
+info "Starting OpenSky server    → :3000"
+SERVER_PORT=3000 SQLITE_PATH=georedis.db \
+  REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}" \
+  ./target/release/georedis-demo \
+  >target/demo-stdout.log 2>target/demo-stderr.log &
+P_DEMO=$!
+
+info "Starting Weather server    → :3001"
+SERVER_PORT=3001 SQLITE_PATH=georedis-weather.db \
+  REDIS_URL=redis://127.0.0.1:6379/1 \
+  WEATHER_POLL_SECS=60 \
+  ./target/release/georedis-weather \
+  >target/weather-stdout.log 2>target/weather-stderr.log &
+P_WEATHER=$!
+
+sleep 3
+
+# ── Vite UI dev servers ───────────────────────────────────────────────────
+info "Starting UI dev servers (5173 / 5174 / 5176)..."
+(cd demo/ui         && npx vite)                                    >target/ui-opensky.log  2>&1 & P_UI0=$!
+(cd demo/ui         && npx vite --config vite.weather.config.ts)    >target/ui-weather.log  2>&1 & P_UI1=$!
+(cd demo/cluster-ui && npx vite)                                    >target/ui-cluster.log  2>&1 & P_UI2=$!
+
+sleep 5
 
 echo ""
-echo "  Open  →  http://localhost:5173"
-echo "  API   →  http://localhost:3000/api/health"
-echo "  Stats →  http://localhost:3000/api/metrics"
+echo "  ┌────────────────────────────────────────────────────────────┐"
+echo "  │  OpenSky aircraft tracker  →  http://localhost:5173        │"
+echo "  │  Live METAR weather map    →  http://localhost:5174        │"
+echo "  │  Cluster monitor           →  http://localhost:5176        │"
+[[ $WITH_CLUSTER -eq 1 ]] && \
+echo "  │  Geo-node cluster          →  http://localhost:4000-4003   │"
+echo "  └────────────────────────────────────────────────────────────┘"
 echo ""
-echo "Press Ctrl+C to stop."
+echo "  Logs in target/  |  Cluster test: cargo run -p georedis-cluster-test"
+echo "  Press Ctrl+C to stop everything."
 
 cleanup() {
-    kill "$BACKEND" "$UI" 2>/dev/null || true
-    docker compose -f demo/docker-compose.yml down
-    echo "Stopped."
+  echo ""; echo "Stopping..."
+  kill "$P_DEMO" "$P_WEATHER" "$P_UI0" "$P_UI1" "$P_UI2" 2>/dev/null || true
+  docker compose -f demo/docker-compose.yml down
+  [[ $WITH_CLUSTER -eq 1 ]] && docker compose -f demo/cluster-compose.yml down
+  echo "Done."
 }
-trap cleanup INT TERM
-wait "$BACKEND"
+trap cleanup INT TERM EXIT
+wait "$P_DEMO"
