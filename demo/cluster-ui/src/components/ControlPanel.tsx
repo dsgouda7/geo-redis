@@ -1,15 +1,30 @@
 import { useState } from 'react';
-import { triggerSplit } from '../hooks/useCluster';
-import type { ClusterEvent } from '../types';
+import { triggerSplit, triggerMerge } from '../hooks/useCluster';
+import type { ClusterEvent, NodeInfo } from '../types';
 
 interface Props {
   onEvent: (msg: string, kind: ClusterEvent['kind']) => void;
   reachable: boolean;
+  nodes: NodeInfo[];
 }
 
-export default function ControlPanel({ onEvent, reachable }: Props) {
-  const [splitPt,   setSplitPt]   = useState('');
+export default function ControlPanel({ onEvent, reachable, nodes = [] }: Props) {
+  const [splitPt,  setSplitPt]  = useState('');
+  const [mergeTarget, setMergeTarget] = useState('');
   const [splitting, setSplitting] = useState(false);
+  const [merging,   setMerging]   = useState(false);
+
+  // Auto-detect the best merge candidate: a node with a non-empty range that
+  // is adjacent to node-0's range (its prefix_start matches node-0's prefix_end)
+  const node0 = nodes.find(n => n.node_id === 'node-0');
+  const mergeCandidates = nodes.filter(n =>
+    n.node_id !== 'node-0' &&
+    n.status !== 'dead' &&
+    n.prefix_start !== '' &&   // not a pure standby with no range
+    (node0 ? n.prefix_start === node0.prefix_end : true)
+  );
+  const autoMergeTarget = mergeTarget || mergeCandidates[0]?.addr || '';
+  const canMerge = reachable && !merging && mergeCandidates.length > 0;
 
   const doSplit = async () => {
     setSplitting(true);
@@ -19,6 +34,17 @@ export default function ControlPanel({ onEvent, reachable }: Props) {
     } catch (e) {
       onEvent(`Split failed: ${e}`, 'warn');
     } finally { setSplitting(false); }
+  };
+
+  const doMerge = async () => {
+    if (!autoMergeTarget) { onEvent('No adjacent shard to merge', 'warn'); return; }
+    setMerging(true);
+    try {
+      const msg = await triggerMerge(autoMergeTarget);
+      onEvent(msg, 'ok');
+    } catch (e) {
+      onEvent(`Merge failed: ${e}`, 'warn');
+    } finally { setMerging(false); }
   };
 
   const btnBase: React.CSSProperties = {
@@ -71,6 +97,32 @@ export default function ControlPanel({ onEvent, reachable }: Props) {
         }}
       >
         {splitting ? 'Splitting…' : 'Trigger Split'}
+      </button>
+
+      {/* Merge button */}
+      <input
+        placeholder={`absorb (${autoMergeTarget || 'no candidate'})`}
+        value={mergeTarget}
+        onChange={e => setMergeTarget(e.target.value)}
+        disabled={!reachable}
+        style={{
+          background: '#0f172a', border: '1px solid #1e3a5f', borderRadius: 6,
+          color: '#e2e8f0', padding: '5px 10px', fontSize: 11,
+          width: 200, fontFamily: 'monospace',
+        }}
+      />
+      <button
+        onClick={doMerge}
+        disabled={!canMerge || merging}
+        title={canMerge ? `Absorb ${autoMergeTarget} into node-0` : 'No adjacent shard to merge'}
+        style={{
+          ...btnBase,
+          background: merging ? '#1e3a5f' : '#06b6d4',
+          color: '#0a1628',
+          opacity: (!canMerge || merging) ? 0.5 : 1,
+        }}
+      >
+        {merging ? 'Merging…' : 'Trigger Merge'}
       </button>
 
       <a

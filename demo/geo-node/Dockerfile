@@ -1,5 +1,5 @@
 # ── Build stage ───────────────────────────────────────────────────────────
-FROM rust:1.78-slim AS builder
+FROM rust:1.87-slim AS builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
@@ -8,15 +8,22 @@ WORKDIR /app
 # Copy manifests first for layer caching
 COPY Cargo.toml Cargo.lock ./
 COPY lib/Cargo.toml lib/
-COPY demo/geo-node/Cargo.toml demo/geo-node/
-COPY demo/server/Cargo.toml demo/server/
-COPY demo/loadtest/Cargo.toml demo/loadtest/
+COPY demo/geo-node/Cargo.toml    demo/geo-node/
+COPY demo/server/Cargo.toml      demo/server/
+COPY demo/loadtest/Cargo.toml    demo/loadtest/
+COPY demo/weather-server/Cargo.toml demo/weather-server/
+
+# tests/cluster_integration is a workspace member — stub it so cargo resolves
+COPY tests/cluster_integration/Cargo.toml tests/cluster_integration/
 
 # Stub all source files so cargo can resolve deps
-RUN mkdir -p lib/src demo/geo-node/src demo/server/src demo/loadtest/src && \
+RUN mkdir -p lib/src demo/geo-node/src demo/server/src demo/loadtest/src \
+             demo/weather-server/src tests/cluster_integration/src && \
     echo "fn main(){}" > demo/geo-node/src/main.rs && \
     echo "fn main(){}" > demo/server/src/main.rs && \
     echo "fn main(){}" > demo/loadtest/src/main.rs && \
+    echo "fn main(){}" > demo/weather-server/src/main.rs && \
+    echo "fn main(){}" > tests/cluster_integration/src/main.rs && \
     echo "" > lib/src/lib.rs
 
 # Cache dependencies only

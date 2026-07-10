@@ -88,7 +88,7 @@ export default function App() {
       </div>
 
       {/* ── Control bar ────────────────────────────────────────────────────── */}
-      <ControlPanel reachable={reachable} onEvent={addExternalEvent} />
+      <ControlPanel reachable={reachable} onEvent={addExternalEvent} nodes={nodes} />
 
       {/* ── Main grid ──────────────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 12, flex: 1 }}>

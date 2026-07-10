@@ -230,6 +230,7 @@ async fn main() -> Result<()> {
         .route("/ingest",          post(route_ingest_batch))
         .route("/ingest-snapshot", post(route_ingest_snapshot))
         .route("/split",           post(route_trigger_split))
+        .route("/merge",           post(route_trigger_merge))
         .route("/assign-range",    put(route_assign_range))
         .route_layer(middleware::from_fn_with_state(state.clone(), api_key_guard));
 
@@ -587,6 +588,92 @@ async fn route_trigger_split(
         split_point:    split_point,
         new_prefix_end: old_end,
     }))
+}
+
+// ── Merge ──────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct MergeRequest {
+    /// HTTP address of the adjacent shard to absorb (e.g. "localhost:4003").
+    absorb: String,
+}
+
+/// POST /merge — absorb an adjacent shard into this one.
+///
+/// Merge is the inverse of split:
+///   1. Mark self as Merging.
+///   2. Fetch ALL entities from the target shard via /delta-sync?since_ms=0.
+///   3. Absorb them with store.merge_entries() (freshness-safe, idempotent).
+///   4. Extend this shard's prefix range to cover the target's range too.
+///   5. Tell the target to reset to Standby (empty prefix range).
+async fn route_trigger_merge(
+    State(s):   State<AppState>,
+    Json(req):  Json<MergeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let err = |e: anyhow::Error| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+    let target = req.absorb.trim_start_matches("http://").to_string();
+
+    info!("Merging: absorbing {} into this shard", target);
+
+    // 1. Mark self as Merging
+    {
+        let mut my = s.my_info.write().await;
+        my.status     = NodeStatus::Merging;
+        my.generation += 1;
+        s.ring.write().await.merge(my.clone());
+    }
+
+    // 2. Fetch all entities from target (since_ms=0 → everything)
+    let delta_url  = format!("http://{target}/delta-sync?since_ms=0");
+    let entities: Vec<GeoEntry> = s.http
+        .get(&delta_url)
+        .timeout(Duration::from_secs(30))
+        .send().await.map_err(|e| err(e.into()))?
+        .json().await.map_err(|e| err(e.into()))?;
+
+    let n = entities.len();
+    info!("Absorbing {} entities from {}", n, target);
+
+    // 3. Merge into this shard using the lib's freshness-ordered primitive
+    s.store.merge_entries(&entities, s.cfg.s2_level).await.map_err(|e| err(e.into()))?;
+
+    let target_prefix_end = {
+        // Collect first so the RwLockReadGuard can be dropped cleanly
+        let all: Vec<NodeInfo> = s.ring.read().await.as_vec();
+        all.into_iter()
+            .find(|n| n.addr.trim_start_matches("http://") == target.as_str()
+                   || n.addr == target)
+            .map(|n| n.prefix_end)
+            .unwrap_or_default()
+    };
+
+    {
+        let mut my = s.my_info.write().await;
+        my.prefix_end  = target_prefix_end.clone();
+        my.status      = NodeStatus::Active;
+        my.generation += 1;
+        s.ring.write().await.merge(my.clone());
+    }
+
+    info!("Merged range now [{}, {})", s.my_info.read().await.prefix_start, target_prefix_end);
+
+    // 5. Reset target to Standby (empty prefix = no responsibility)
+    let _ = s.http
+        .put(format!("http://{target}/assign-range"))
+        .json(&AssignRangeRequest {
+            prefix_start:       String::new(),
+            prefix_end:         String::new(),
+            source_addr:        None,
+            snapshot_timestamp: None,
+        })
+        .send().await;
+
+    info!("Merge complete: absorbed {n} entities, target {target} reset to Standby");
+
+    Ok(Json(serde_json::json!({
+        "absorbed_entities": n,
+        "new_range":         format!("[{}, {})", s.my_info.read().await.prefix_start, target_prefix_end),
+    })))
 }
 
 /// Find the token prefix that splits current keys roughly in half.
@@ -963,6 +1050,19 @@ async fn route_assign_range(
     State(s):  State<AppState>,
     Json(req): Json<AssignRangeRequest>,
 ) -> StatusCode {
+    // Empty prefix_start + prefix_end = release this shard back to Standby.
+    // This is called by the absorbing node after a successful merge.
+    if req.prefix_start.is_empty() && req.prefix_end.is_empty() {
+        info!("Releasing range — transitioning to Standby");
+        let mut my = s.my_info.write().await;
+        my.prefix_start = String::new();
+        my.prefix_end   = String::new();
+        my.status       = NodeStatus::Standby;
+        my.generation  += 1;
+        s.ring.write().await.merge(my.clone());
+        return StatusCode::OK;
+    }
+
     info!(
         "Assigned range [{}, {}); bootstrapping from {}",
         req.prefix_start, req.prefix_end,

@@ -85,7 +85,16 @@ export function useCluster() {
   return { current, snapshots, throughput, events, reachable };
 }
 
-// ── Control helpers (trigger split from the UI) ────────────────────────────
+export async function triggerMerge(absorbAddr: string): Promise<string> {
+  const body = JSON.stringify({ absorb: absorbAddr });
+  const r = await fetch('http://localhost:4000/merge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+  const data = await r.json();
+  return `Merged: absorbed ${data.absorbed_entities?.toLocaleString()} entities → range ${data.new_range}`;
+}
 export async function triggerSplit(splitPoint?: string): Promise<string> {
   const body = splitPoint
     ? JSON.stringify({ target: 'geo-node-3:4003', split_point: splitPoint })
