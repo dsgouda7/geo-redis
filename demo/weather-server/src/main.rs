@@ -1,8 +1,10 @@
 mod config;
 mod db;
+mod metar_bulk;
 mod open_meteo;
 mod routes;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use axum::{routing::get, Router};
 use tokio::sync::{broadcast, RwLock};
@@ -10,15 +12,28 @@ use tower_http::cors::CorsLayer;
 use georedis::{GeoEntry, GeoTrie, Metrics, RedisStore};
 use config::Config;
 
+/// Payload for each SSE event dispatched during a streaming cycle.
+#[derive(Clone, serde::Serialize)]
+pub struct StationEvent {
+    pub n:         usize,
+    pub total:     usize,
+    pub id:        String,
+    pub lat:       f64,
+    pub lon:       f64,
+    pub temp_c:    f64,
+    pub condition: String,
+    pub wmo_code:  u8,
+    pub complete:  bool,
+}
+
 pub struct AppState {
     pub trie:      RwLock<GeoTrie>,
     pub store:     RedisStore,
     pub config:    Config,
     pub last_sync: RwLock<Option<u64>>,
     pub db:        Arc<db::Db>,
-    /// Broadcast channel — fires after every successful poll.
-    /// SSE clients subscribe to be notified when fresh data is available.
-    pub updates:   broadcast::Sender<()>,
+    pub updates:   broadcast::Sender<StationEvent>,
+    pub positions: RwLock<HashMap<String, (f64, f64)>>,
 }
 
 #[tokio::main]
@@ -32,97 +47,123 @@ async fn main() -> anyhow::Result<()> {
     let metrics  = Metrics::new();
     let store    = RedisStore::with_config(&cfg.redis_url, Arc::clone(&metrics), cfg.entity_ttl_secs)?;
     let database = Arc::new(db::Db::open(&cfg.sqlite_path)?);
-    let (tx, _)  = broadcast::channel::<()>(16);
+    let (tx, _)  = broadcast::channel::<StationEvent>(2048);
 
-    tracing::info!("Source: Open-Meteo (global 10° grid — no API key required)");
+    tracing::info!("Source: aviationweather.gov bulk METAR dump (updated every 5 min)");
     tracing::info!("Redis:  {}", cfg.redis_url);
     tracing::info!("SQLite: {}", cfg.sqlite_path);
-    tracing::info!("S2 level: {}, poll interval: {}s", cfg.s2_level, cfg.poll_interval_secs);
+    tracing::info!("S2 level: {}, poll: {}s, stream rate: {}ms/event",
+        cfg.s2_level, cfg.poll_interval_secs, cfg.stream_rate_ms);
 
     let state = Arc::new(AppState {
-        trie:    RwLock::new(GeoTrie::new(cfg.s2_level)),
+        trie:      RwLock::new(GeoTrie::new(cfg.s2_level)),
         store,
-        config:  cfg.clone(),
+        config:    cfg.clone(),
         last_sync: RwLock::new(None),
-        db:      database,
-        updates: tx,
+        db:        database,
+        updates:   tx,
+        positions: RwLock::new(HashMap::new()),
     });
 
-    // ── Background poller ─────────────────────────────────────────────────
     let poll_state = Arc::clone(&state);
     tokio::spawn(async move {
         let http = reqwest::Client::new();
-        let mut poll_count: u32 = 0;
         loop {
-            tracing::info!("Fetching Open-Meteo global weather grid…");
-            match open_meteo::fetch_stations(&http).await {
-                Ok(stations) => {
-                    let n = stations.len();
+            match metar_bulk::download_and_parse(&http).await {
+                Ok(stations) if !stations.is_empty() => {
+                    let total = stations.len();
 
-                    // 1. Persist to SQLite
                     let db_data: Vec<db::StationData> = stations.iter().map(|s| db::StationData {
-                        id:        s.id.clone(),
+                        id:        s.icao_id.clone(),
                         lat:       s.lat,
                         lon:       s.lon,
-                        name:      s.name.clone(),
-                        temp_c:    Some(s.temp_c),
-                        dewp_c:    None,
-                        wdir:      Some(s.wdir),
-                        wspd_kt:   Some(s.wspd_kt),
-                        wx_string: format!("{} {}", open_meteo::wmo_emoji(s.wmo_code), open_meteo::wmo_label(s.wmo_code)),
-                        clouds:    String::new(),
-                        flt_cat:   String::new(),
+                        name:      s.icao_id.clone(),
+                        temp_c:    s.temp_c,
+                        dewp_c:    s.dewp_c,
+                        wdir:      s.wind_dir,
+                        wspd_kt:   s.wind_spd,
+                        wx_string: format!(
+                            "{} {}",
+                            open_meteo::wmo_emoji(metar_bulk::wx_to_wmo(&s.wx, &s.sky)),
+                            if s.wx.is_empty() { s.sky.clone() } else { s.wx.clone() }
+                        ),
+                        clouds:    s.sky.clone(),
+                        flt_cat:   s.flt_cat.clone(),
                     }).collect();
                     if let Err(e) = poll_state.db.upsert_batch(db_data).await {
-                        tracing::error!("SQLite upsert failed: {e}");
+                        tracing::error!("SQLite upsert: {e}");
                     }
 
-                    // 2. Rebuild trie
-                    {
-                        let mut trie = poll_state.trie.write().await;
-                        trie.clear();
-                        for s in &stations {
-                            trie.insert(GeoEntry {
-                                id:  s.id.clone(),
-                                lat: s.lat,
-                                lon: s.lon,
-                                payload: serde_json::json!({
-                                    "name":      s.name,
-                                    "temp_c":    s.temp_c,
-                                    "wspd_kt":   s.wspd_kt,
-                                    "wdir":      s.wdir,
-                                    "wmo_code":  s.wmo_code,
-                                    "precip":    s.precip,
-                                    "__is_weather": true,
-                                }),
-                            });
+                    tracing::info!("Streaming {total} METAR events into trie…");
+                    for (n, s) in stations.iter().enumerate() {
+                        let wmo  = metar_bulk::wx_to_wmo(&s.wx, &s.sky);
+                        let temp = s.temp_c.unwrap_or(0.0);
+
+                        let entry = GeoEntry {
+                            id:  s.icao_id.clone(),
+                            lat: s.lat,
+                            lon: s.lon,
+                            payload: serde_json::json!({
+                                "name":         s.icao_id,
+                                "temp_c":       s.temp_c,
+                                "feels_like_c": null,
+                                "humidity_pct": null,
+                                "wspd_kt":      s.wind_spd,
+                                "gust_kt":      s.wind_gst,
+                                "wdir":         s.wind_dir,
+                                "wmo_code":     wmo,
+                                "precip":       null,
+                                "cloud_pct":    null,
+                                "pressure_hpa": null,
+                                "flt_cat":      s.flt_cat,
+                                "__is_weather": true,
+                            }),
+                        };
+
+                        {
+                            let mut trie  = poll_state.trie.write().await;
+                            let mut pos   = poll_state.positions.write().await;
+                            if let Some(&(old_lat, old_lon)) = pos.get(&s.icao_id) {
+                                trie.remove_entry(old_lat, old_lon, &s.icao_id);
+                            }
+                            trie.insert(entry);
+                            pos.insert(s.icao_id.clone(), (s.lat, s.lon));
+                        }
+
+                        if n % 200 == 199 {
+                            let trie = poll_state.trie.read().await;
+                            let _ = poll_state.store.persist_trie(&trie).await;
+                        }
+
+                        let _ = poll_state.updates.send(StationEvent {
+                            n, total,
+                            complete:  n == total - 1,
+                            id:        s.icao_id.clone(),
+                            lat:       s.lat,
+                            lon:       s.lon,
+                            temp_c:    temp,
+                            condition: if s.wx.is_empty() { s.sky.clone() } else { s.wx.clone() },
+                            wmo_code:  wmo,
+                        });
+
+                        if poll_state.config.stream_rate_ms > 0 {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                poll_state.config.stream_rate_ms,
+                            )).await;
                         }
                     }
 
-                    // 3. Persist trie to Redis
                     {
                         let trie = poll_state.trie.read().await;
-                        if let Err(e) = poll_state.store.persist_trie(&trie).await {
-                            tracing::error!("Redis persist failed: {e}");
-                        }
+                        let _ = poll_state.store.persist_trie(&trie).await;
                     }
-
                     let ts = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                     *poll_state.last_sync.write().await = Some(ts);
-                    tracing::info!("Synced {n} weather grid points to trie + Redis");
-
-                    // 4. Notify all SSE clients that fresh data is ready
-                    let _ = poll_state.updates.send(());
-
-                    poll_count += 1;
-                    if poll_count % 6 == 0 {
-                        if let Err(e) = poll_state.db.prune_history().await {
-                            tracing::warn!("History prune failed: {e}");
-                        }
-                    }
+                    tracing::info!("Streaming complete — {total} stations live");
                 }
-                Err(e) => tracing::error!("Open-Meteo fetch failed: {e}"),
+                Ok(_) => tracing::warn!("Bulk METAR returned 0 stations"),
+                Err(e) => tracing::error!("Bulk METAR failed: {e}"),
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(
                 poll_state.config.poll_interval_secs,
@@ -130,7 +171,6 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // ── HTTP server ───────────────────────────────────────────────────────
     let app = Router::new()
         .route("/api/aircraft",     get(routes::all_stations))
         .route("/api/aircraft/:id", get(routes::station_detail))

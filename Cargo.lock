@@ -851,6 +851,7 @@ dependencies = [
  "anyhow",
  "axum 0.7.9",
  "dotenvy",
+ "flate2",
  "futures-util",
  "georedis",
  "reqwest",

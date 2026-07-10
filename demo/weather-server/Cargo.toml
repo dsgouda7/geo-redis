@@ -18,3 +18,4 @@ dotenvy            = "0.15"
 s2                 = "0.0.10"
 rusqlite           = { version = "0.31", features = ["bundled"] }
 futures-util       = "0.3"
+flate2             = "1"

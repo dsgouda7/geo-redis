@@ -27,15 +27,20 @@ pub struct RegionParams {
 // by the new weather icon component in the UI.
 
 fn station_to_aircraft(mut e: GeoEntry) -> GeoEntry {
-    let name   = e.payload["name"].as_str().unwrap_or(&e.id).to_string();
-    let temp_c = e.payload["temp_c"].as_f64().unwrap_or(0.0);
-    let wspd   = e.payload["wspd_kt"].as_f64();
-    let wdir   = e.payload["wdir"].as_u64().map(|d| d as f64);
-    let wmo    = e.payload["wmo_code"].as_u64().unwrap_or(0) as u8;
+    let name        = e.payload["name"].as_str().unwrap_or(&e.id).to_string();
+    let temp_c      = e.payload["temp_c"].as_f64().unwrap_or(0.0);
+    let feels_like  = e.payload["feels_like_c"].as_f64();
+    let humidity    = e.payload["humidity_pct"].as_f64();
+    let wspd        = e.payload["wspd_kt"].as_f64();
+    let gust        = e.payload["gust_kt"].as_f64();
+    let wdir        = e.payload["wdir"].as_u64().map(|d| d as f64);
+    let cloud       = e.payload["cloud_pct"].as_f64();
+    let pressure    = e.payload["pressure_hpa"].as_f64();
+    let precip      = e.payload["precip"].as_f64();
+    let wmo         = e.payload["wmo_code"].as_u64().unwrap_or(0) as u8;
 
     e.payload = serde_json::json!({
         "callsign":       name,
-        // altitude encodes temperature for the colour scale (hot=red, cold=purple)
         "altitude":       open_meteo::temp_to_altitude_m(temp_c),
         "velocity":       wspd,
         "heading":        wdir,
@@ -44,6 +49,12 @@ fn station_to_aircraft(mut e: GeoEntry) -> GeoEntry {
         // UI-specific extras
         "__is_weather":   true,
         "temp_c":         temp_c,
+        "feels_like_c":   feels_like,
+        "humidity_pct":   humidity,
+        "gust_kt":        gust,
+        "cloud_pct":      cloud,
+        "pressure_hpa":   pressure,
+        "precip":         precip,
         "wmo_code":       wmo,
     });
     e
@@ -99,7 +110,7 @@ pub async fn get_metrics(State(st): State<Arc<AppState>>) -> Json<serde_json::Va
     let trie_size = st.trie.read().await.len();
     let last_sync = *st.last_sync.read().await;
     Json(serde_json::json!({
-        "source":    "Open-Meteo (global 10° grid)",
+        "source":    "aviationweather.gov METAR bulk dump (every 5 min)",
         "metrics":   snapshot,
         "trie_size": trie_size,
         "last_sync": last_sync,
@@ -107,20 +118,24 @@ pub async fn get_metrics(State(st): State<Arc<AppState>>) -> Json<serde_json::Va
 }
 
 pub async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ok", "source": "Open-Meteo" }))
+    Json(serde_json::json!({ "status": "ok", "source": "METAR bulk" }))
 }
 
 /// GET /api/stream — SSE endpoint.
-/// Fires an "update" event after every successful weather poll so the browser
-/// can refresh immediately rather than polling on a fixed timer.
+/// Each METAR observation insertion fires a JSON StationEvent.
+/// The browser subscribes once and receives live station-by-station updates
+/// as the bulk dump is streamed into the georedis cache.
 pub async fn sse_stream(
     State(st): State<Arc<AppState>>,
 ) -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
     let rx = st.updates.subscribe();
     let s = stream::unfold(rx, |mut rx| async move {
         let event = match tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
-            Ok(Ok(_)) => Event::default().event("update").data("new"),
-            _         => Event::default().event("keepalive").data(""),
+            Ok(Ok(station_event)) => {
+                let json = serde_json::to_string(&station_event).unwrap_or_default();
+                Event::default().event("station").data(json)
+            }
+            _ => Event::default().event("keepalive").data(""),
         };
         Some((Ok::<Event, Infallible>(event), rx))
     });

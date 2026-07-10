@@ -1,24 +1,28 @@
+//! Open-Meteo integration — retained as a fallback data source.
+//! Primary source is now `metar_bulk` (aviationweather.gov bulk CSV dump).
+#![allow(dead_code)]
+
 use serde::Deserialize;
 
 /// One current weather observation from Open-Meteo.
+/// Retained for potential future use; primary data source is now metar_bulk.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct WeatherObs {
-    /// Synthetic ID: "lat_lon" (e.g. "48.0_2.0")
-    pub id:        String,
-    /// Human-readable label, e.g. "48°N 2°E"
-    pub name:      String,
-    pub lat:       f64,
-    pub lon:       f64,
-    /// Temperature in °C
-    pub temp_c:    f64,
-    /// Wind speed in knots
-    pub wspd_kt:   f64,
-    /// Wind direction degrees (0–360)
-    pub wdir:      u16,
-    /// WMO weather interpretation code
-    pub wmo_code:  u8,
-    /// Precipitation mm/h
-    pub precip:    f64,
+    pub id:           String,
+    pub name:         String,
+    pub lat:          f64,
+    pub lon:          f64,
+    pub temp_c:       f64,
+    pub feels_like_c: f64,
+    pub humidity_pct: f64,
+    pub wspd_kt:      f64,
+    pub gust_kt:      f64,
+    pub wdir:         u16,
+    pub wmo_code:     u8,
+    pub precip:       f64,
+    pub cloud_pct:    f64,
+    pub pressure_hpa: f64,
 }
 
 // ── WMO codes ─────────────────────────────────────────────────────────────
@@ -94,39 +98,49 @@ struct OmResponse {
 
 #[derive(Deserialize)]
 struct CurrentWeather {
-    temperature_2m:      f64,
-    wind_speed_10m:      f64,
-    wind_direction_10m:  f64,
-    weather_code:        f64,  // Open-Meteo returns this as float
-    precipitation:       f64,
+    temperature_2m:        f64,
+    apparent_temperature:  f64,
+    relative_humidity_2m:  f64,
+    wind_speed_10m:        f64,
+    wind_gusts_10m:        f64,
+    wind_direction_10m:    f64,
+    weather_code:          f64,
+    precipitation:         f64,
+    cloud_cover:           f64,
+    surface_pressure:      f64,
 }
 
-// ── Global 10° grid ────────────────────────────────────────────────────────
+// ── Global 5° grid (2520 points, ~500 km spacing) ─────────────────────────
 
 fn global_grid() -> Vec<(f64, f64)> {
     let mut pts = Vec::new();
-    let mut lat = -80.0_f64;
-    while lat <= 80.01 {
-        let mut lon = -170.0_f64;
-        while lon <= 170.01 {
+    let mut lat = -85.0_f64;
+    while lat <= 85.01 {
+        let mut lon = -175.0_f64;
+        while lon <= 175.01 {
             pts.push((lat, lon));
-            lon += 10.0;
+            lon += 5.0;
         }
-        lat += 10.0;
+        lat += 5.0;
     }
     pts
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
-/// Fetches current weather for a global 10° grid (~595 points) from Open-Meteo.
-/// No API key required.  Sends two batched requests (~300 points each) to
-/// stay well within URL length limits.
+/// Fetches current weather for a global 5° grid (~2520 points) from Open-Meteo.
+/// No API key required. Sends batches of 400 points (~7 requests) with a small
+/// inter-request delay to stay well within Open-Meteo's per-minute rate limit.
 pub async fn fetch_stations(client: &reqwest::Client) -> anyhow::Result<Vec<WeatherObs>> {
     let grid = global_grid();
     let mut all: Vec<WeatherObs> = Vec::with_capacity(grid.len());
 
-    for chunk in grid.chunks(300) {
+    for (i, chunk) in grid.chunks(400).enumerate() {
+        // Small courtesy delay after the first batch — keeps us well under
+        // Open-Meteo's per-minute request limit (free tier: ~10 req/min).
+        if i > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+        }
         let lats: Vec<String> = chunk.iter().map(|(la, _)| format!("{la}")).collect();
         let lons: Vec<String> = chunk.iter().map(|(_, lo)| format!("{lo}")).collect();
 
@@ -135,7 +149,10 @@ pub async fn fetch_stations(client: &reqwest::Client) -> anyhow::Result<Vec<Weat
             .query(&[
                 ("latitude",  lats.join(",")),
                 ("longitude", lons.join(",")),
-                ("current",   "temperature_2m,wind_speed_10m,wind_direction_10m,weather_code,precipitation".to_string()),
+                ("current",
+                 "temperature_2m,apparent_temperature,relative_humidity_2m,\
+                  precipitation,weather_code,cloud_cover,surface_pressure,\
+                  wind_speed_10m,wind_direction_10m,wind_gusts_10m".to_string()),
                 ("wind_speed_unit", "kn".to_string()),
             ])
             .timeout(std::time::Duration::from_secs(30))
@@ -145,36 +162,37 @@ pub async fn fetch_stations(client: &reqwest::Client) -> anyhow::Result<Vec<Weat
             .json::<serde_json::Value>()
             .await?;
 
-        // Open-Meteo returns an array for multiple points, or an error object.
         let records: Vec<OmResponse> = match body {
-            serde_json::Value::Array(arr) => {
-                serde_json::from_value(serde_json::Value::Array(arr))
-                    .unwrap_or_default()
-            }
-            serde_json::Value::Object(ref obj) if obj.contains_key("error") => {
-                anyhow::bail!("Open-Meteo API error: {}", body["reason"].as_str().unwrap_or("unknown"));
-            }
+            serde_json::Value::Array(arr) =>
+                serde_json::from_value(serde_json::Value::Array(arr)).unwrap_or_default(),
+            serde_json::Value::Object(ref obj) if obj.contains_key("error") =>
+                anyhow::bail!("Open-Meteo error: {}", body["reason"].as_str().unwrap_or("unknown")),
             single => match serde_json::from_value::<OmResponse>(single) {
-                Ok(r) => vec![r],
+                Ok(r)  => vec![r],
                 Err(_) => vec![],
             },
         };
 
         for r in records {
-            let lat = (r.latitude * 10.0).round() / 10.0;
+            let lat = (r.latitude  * 10.0).round() / 10.0;
             let lon = (r.longitude * 10.0).round() / 10.0;
             let wmo = r.current.weather_code as u8;
             let lat_str = if lat >= 0.0 { format!("{lat}°N") } else { format!("{}°S", lat.abs()) };
             let lon_str = if lon >= 0.0 { format!("{lon}°E") } else { format!("{}°W", lon.abs()) };
             all.push(WeatherObs {
-                id:       format!("{lat}_{lon}"),
-                name:     format!("{lat_str} {lon_str}"),
+                id:           format!("{lat}_{lon}"),
+                name:         format!("{lat_str} {lon_str}"),
                 lat, lon,
-                temp_c:  r.current.temperature_2m,
-                wspd_kt: r.current.wind_speed_10m,
-                wdir:    r.current.wind_direction_10m as u16,
-                wmo_code: wmo,
-                precip:  r.current.precipitation,
+                temp_c:       r.current.temperature_2m,
+                feels_like_c: r.current.apparent_temperature,
+                humidity_pct: r.current.relative_humidity_2m,
+                wspd_kt:      r.current.wind_speed_10m,
+                gust_kt:      r.current.wind_gusts_10m,
+                wdir:         r.current.wind_direction_10m as u16,
+                wmo_code:     wmo,
+                precip:       r.current.precipitation,
+                cloud_pct:    r.current.cloud_cover,
+                pressure_hpa: r.current.surface_pressure,
             });
         }
     }

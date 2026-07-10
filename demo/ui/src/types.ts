@@ -8,11 +8,23 @@ export interface AircraftPayload {
   history?:        [number, number][];
   // ── Weather-station extras (set by weather-server, absent for aircraft) ──
   /** True when this entry comes from the weather server */
-  __is_weather?:   boolean;
+  __is_weather?:    boolean;
   /** Raw temperature °C */
-  temp_c?:         number | null;
+  temp_c?:          number | null;
+  /** Apparent / feels-like temperature °C */
+  feels_like_c?:    number | null;
+  /** Relative humidity % */
+  humidity_pct?:    number | null;
+  /** Wind gust speed knots */
+  gust_kt?:         number | null;
+  /** Cloud cover % */
+  cloud_pct?:       number | null;
+  /** Surface pressure hPa */
+  pressure_hpa?:    number | null;
+  /** Precipitation mm/h */
+  precip?:          number | null;
   /** WMO weather interpretation code (0=clear … 99=thunderstorm+hail) */
-  wmo_code?:       number | null;
+  wmo_code?:        number | null;
 }
 
 export interface Aircraft {

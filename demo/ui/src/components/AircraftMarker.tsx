@@ -111,6 +111,19 @@ export default function AircraftMarker({ aircraft, onClick }: Props) {
     const tempC   = payload.temp_c ?? 0;
     const tempCol = getTempColor(tempC);
     const emoji   = WMO_EMOJI[payload.wmo_code ?? 0] ?? '🌡️';
+    const feels   = payload.feels_like_c;
+    const hum     = payload.humidity_pct;
+    const cloud   = payload.cloud_pct;
+    const gust    = payload.gust_kt;
+    const press   = payload.pressure_hpa;
+    const precip  = payload.precip;
+    const wdir    = payload.heading;
+    const wspd    = payload.velocity;
+
+    // Compass direction from degrees
+    const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    const compassDir = wdir != null ? dirs[Math.round(wdir / 22.5) % 16] : null;
+
     return (
       <Marker
         position={[lat, lon]}
@@ -120,22 +133,54 @@ export default function AircraftMarker({ aircraft, onClick }: Props) {
         <Tooltip sticky direction="top" offset={[0, -4]} opacity={1}>
           <div style={{
             background: '#0f172a', color: '#f1f5f9',
-            borderRadius: 8, padding: '10px 13px',
-            minWidth: 200, fontSize: 12, lineHeight: 1.8,
+            borderRadius: 8, padding: '10px 14px',
+            minWidth: 220, fontSize: 12, lineHeight: 1.8,
             border: `1px solid ${tempCol}55`,
             boxShadow: `0 4px 16px rgba(0,0,0,0.6), 0 0 0 1px ${tempCol}33`,
           }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', marginBottom: 4 }}>
+            {/* Header */}
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', marginBottom: 2 }}>
               {emoji} {payload.callsign ?? id}
             </div>
             <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>
               {payload.origin_country ?? '—'}
             </div>
+
+            {/* Temperature row */}
+            <div style={{ display: 'flex', gap: 12, marginBottom: 4 }}>
+              <div>
+                <div style={{ color: '#64748b', fontSize: 10 }}>Temperature</div>
+                <div style={{ color: tempCol, fontWeight: 700, fontSize: 15 }}>
+                  {Math.round(tempC) > 0 ? '+' : ''}{Math.round(tempC)}°C
+                </div>
+              </div>
+              {feels != null && (
+                <div>
+                  <div style={{ color: '#64748b', fontSize: 10 }}>Feels like</div>
+                  <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>
+                    {Math.round(feels) > 0 ? '+' : ''}{Math.round(feels)}°C
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <hr style={{ border: 'none', borderTop: '1px solid rgba(255,255,255,0.08)', margin: '6px 0' }} />
+
+            {/* Stats grid */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 16px' }}>
-              <WStat label="Temp"      value={`${Math.round(tempC > 0 ? tempC : tempC)}°C`} color={tempCol} />
-              <WStat label="Wind"      value={payload.velocity != null ? `${Math.round(payload.velocity)} kt` : '—'} />
-              <WStat label="Direction" value={payload.heading != null ? `${Math.round(payload.heading)}°` : 'Variable'} />
-              <WStat label="Grid pt"   value={id} />
+              <WStat label="Wind"
+                value={wspd != null
+                  ? `${Math.round(wspd)} kt${compassDir ? ' ' + compassDir : ''}`
+                  : '—'} />
+              {gust != null && gust > (wspd ?? 0) + 5 && (
+                <WStat label="Gusts" value={`${Math.round(gust)} kt`} color="#f97316" />
+              )}
+              {hum != null   && <WStat label="Humidity"  value={`${Math.round(hum)}%`} />}
+              {cloud != null && <WStat label="Cloud"     value={`${Math.round(cloud)}%`} />}
+              {precip != null && precip > 0 && (
+                <WStat label="Precip" value={`${precip.toFixed(1)} mm/h`} color="#60a5fa" />
+              )}
+              {press != null && <WStat label="Pressure"  value={`${Math.round(press)} hPa`} />}
             </div>
           </div>
         </Tooltip>

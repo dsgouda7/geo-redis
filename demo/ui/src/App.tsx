@@ -42,6 +42,7 @@ export default function App() {
   const [aircraft, setAircraft] = useState<Aircraft[]>([]);
   const [metrics,  setMetrics]  = useState<MetricsResponse | null>(null);
   const [status,   setStatus]   = useState('Loading live aircraft...');
+  const [streamProgress, setStreamProgress] = useState<{n:number,total:number}|null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const mapRef        = useRef<LeafletMap | null>(null);
   const lastBoundsRef = useRef<[number,number,number,number,number] | null>(null);
@@ -104,15 +105,29 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-  // SSE subscription — weather server pushes "update" after each poll.
+  // SSE subscription — weather server streams one StationEvent per METAR insertion.
+  // Aircraft server has no /api/stream so EventSource closes cleanly.
   useEffect(() => {
     const es = new EventSource('/api/stream');
-    es.addEventListener('update', () => {
-      if (lastBoundsRef.current) {
-        void handleBounds(...lastBoundsRef.current);
+
+    // Rich per-station event from the weather server
+    es.addEventListener('station', (e) => {
+      const data = JSON.parse(e.data) as {n:number; total:number; complete:boolean};
+      setStreamProgress({ n: data.n + 1, total: data.total });
+      // Refresh map every 200 stations during streaming, and on completion
+      if (data.complete || data.n % 200 === 199) {
+        if (lastBoundsRef.current) void handleBounds(...lastBoundsRef.current);
+        if (data.complete) {
+          setTimeout(() => setStreamProgress(null), 3000);
+        }
       }
     });
-    // If /api/stream errors (e.g. aircraft server with no SSE), just close quietly
+
+    // Legacy simple update event (fallback for future servers)
+    es.addEventListener('update', () => {
+      if (lastBoundsRef.current) void handleBounds(...lastBoundsRef.current);
+    });
+
     es.onerror = () => es.close();
     return () => es.close();
   }, [handleBounds]);
@@ -125,6 +140,21 @@ export default function App() {
         <span style={{ color: '#475569', fontSize: 12 }}>·</span>
         <span style={{ color: '#94a3b8', fontSize: 12 }}>Live Aircraft Tracker</span>
         <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: '#64748b', maxWidth: 500, textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status}</span>
+        {streamProgress && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <div style={{ fontSize: '0.7rem', color: '#38bdf8', whiteSpace: 'nowrap' }}>
+              ⚡ Streaming {streamProgress.n.toLocaleString()} / {streamProgress.total.toLocaleString()}
+            </div>
+            <div style={{ width: 80, height: 4, background: '#1e293b', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', borderRadius: 2,
+                background: 'linear-gradient(90deg,#38bdf8,#818cf8)',
+                width: `${(streamProgress.n / streamProgress.total * 100).toFixed(0)}%`,
+                transition: 'width 0.1s ease',
+              }} />
+            </div>
+          </div>
+        )}
       </header>
       <div style={{ flex: 1, position: 'relative' }}>
         <MapContainer
