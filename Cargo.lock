@@ -933,116 +933,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "georedis"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "redis",
- "s2",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "georedis-cluster-test"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "georedis",
- "rand 0.8.6",
- "redis",
- "reqwest",
- "serde_json",
- "testcontainers",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "georedis-demo"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum 0.7.9",
- "dotenvy",
- "georedis",
- "reqwest",
- "rusqlite",
- "s2",
- "serde",
- "serde_json",
- "tokio",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "georedis-geo-node"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum 0.7.9",
- "dotenvy",
- "georedis",
- "prost",
- "rand 0.8.6",
- "redis",
- "reqwest",
- "rusqlite",
- "s2",
- "serde",
- "serde_json",
- "subtle",
- "tokio",
- "tonic",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "georedis-loadtest"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "dotenvy",
- "georedis",
- "hdrhistogram",
- "rand 0.8.6",
- "redis",
- "s2",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "georedis-weather"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum 0.7.9",
- "dotenvy",
- "flate2",
- "futures-util",
- "georedis",
- "reqwest",
- "rusqlite",
- "s2",
- "serde",
- "serde_json",
- "tokio",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "getrandom"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2030,6 +1920,116 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "proxima"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "redis",
+ "s2",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "proxima-cluster-test"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "proxima",
+ "rand 0.8.6",
+ "redis",
+ "reqwest",
+ "serde_json",
+ "testcontainers",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "proxima-demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum 0.7.9",
+ "dotenvy",
+ "proxima",
+ "reqwest",
+ "rusqlite",
+ "s2",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "proxima-geo-node"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum 0.7.9",
+ "dotenvy",
+ "prost",
+ "proxima",
+ "rand 0.8.6",
+ "redis",
+ "reqwest",
+ "rusqlite",
+ "s2",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tokio",
+ "tonic",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "proxima-loadtest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dotenvy",
+ "hdrhistogram",
+ "proxima",
+ "rand 0.8.6",
+ "redis",
+ "s2",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "proxima-weather"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum 0.7.9",
+ "dotenvy",
+ "flate2",
+ "futures-util",
+ "proxima",
+ "reqwest",
+ "rusqlite",
+ "s2",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

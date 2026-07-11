@@ -1,4 +1,4 @@
-use georedis::{GeoEntry, GeoTrie};
+use proxima::{GeoEntry, GeoTrie};
 use serde_json::json;
 
 // ── helpers ────────────────────────────────────────────────────────────────

@@ -1,11 +1,11 @@
 [package]
-name        = "georedis"
+name        = "proxima"
 version     = "0.1.0"
 edition     = "2021"
-description = "S2-geometry-keyed trie persisted to Redis — fast near-me queries for dynamic objects"
-repository  = "https://github.com/YOUR_USERNAME/georedis"
+description = "S2-geometry-keyed distributed geospatial trie with Redis persistence — sub-10ms near-me queries over millions of moving objects"
+repository  = "https://github.com/dsgouda7/proxima"
 license     = "MIT"
-keywords    = ["geo", "s2", "redis", "trie", "spatial"]
+keywords    = ["geo", "s2", "redis", "distributed", "spatial"]
 categories  = ["data-structures", "database"]
 
 [dependencies]

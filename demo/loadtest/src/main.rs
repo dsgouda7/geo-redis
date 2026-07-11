@@ -1,4 +1,4 @@
-//! georedis-loadtest
+//! proxima-loadtest
 //!
 //! Fires parallel Tokio tasks to simulate production-scale Redis load:
 //!   - N writer tasks each pipeline-writing a full aircraft batch every cycle
@@ -7,8 +7,8 @@
 //! Latencies are captured in HDR histograms (p50/p95/p99/p99.9/max).
 //!
 //! Usage:
-//!   cargo run --release -p georedis-loadtest -- --help
-//!   cargo run --release -p georedis-loadtest -- --writers 4 --readers 16 --duration-secs 60
+//!   cargo run --release -p proxima-loadtest -- --help
+//!   cargo run --release -p proxima-loadtest -- --writers 4 --readers 16 --duration-secs 60
 
 use std::{
     f64::consts::PI,
@@ -21,7 +21,7 @@ use std::{
 
 use anyhow::Result;
 use clap::Parser;
-use georedis::{GeoEntry, GeoTrie};
+use proxima::{GeoEntry, GeoTrie};
 use hdrhistogram::Histogram;
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
@@ -33,7 +33,7 @@ use serde_json::json;
 
 #[derive(Parser, Debug)]
 #[command(
-    name  = "georedis-loadtest",
+    name  = "proxima-loadtest",
     about = "Production-scale load test: parallel writers + readers against a live Redis"
 )]
 struct Args {
@@ -296,7 +296,7 @@ async fn sharded_writer_task(
     s2_level: u8,
 ) {
     let mut rng   = StdRng::from_entropy();
-    let prefix    = "georedis";
+    let prefix    = "proxima";
     const TTL: u64  = 120;
     const EXPIRE: i64 = 120;
 
@@ -370,7 +370,7 @@ async fn sharded_reader_task(
     s2_level: u8,
 ) {
     let mut rng  = StdRng::from_entropy();
-    let prefix   = "georedis";
+    let prefix   = "proxima";
 
     while !stop.load(Relaxed) {
         let tokens = random_viewport_tokens(&mut rng, s2_level);
@@ -409,7 +409,7 @@ async fn writer_task(
     s2_level: u8,
 ) {
     let mut rng    = StdRng::from_entropy();
-    let prefix     = "georedis";
+    let prefix     = "proxima";
     const TTL: u64  = 120;
     const EXPIRE: i64 = 120;
 
@@ -469,7 +469,7 @@ async fn reader_task(
     s2_level: u8,
 ) {
     let mut rng  = StdRng::from_entropy();
-    let prefix   = "georedis";
+    let prefix   = "proxima";
 
     while !stop.load(Relaxed) {
         let tokens = random_viewport_tokens(&mut rng, s2_level);
@@ -532,7 +532,7 @@ fn random_viewport_tokens(rng: &mut impl Rng, s2_level: u8) -> Vec<String> {
 fn print_header(a: &Args, shards: &[ShardSpec]) {
     println!();
     println!("╔══════════════════════════════════════════════════════════╗");
-    println!("║             GEOREDIS  PRODUCTION  LOAD  TEST             ║");
+    println!("║             PROXIMA  PRODUCTION  LOAD  TEST             ║");
     println!("╚══════════════════════════════════════════════════════════╝");
     println!();
     if shards.is_empty() {

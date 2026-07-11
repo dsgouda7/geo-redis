@@ -1,10 +1,10 @@
-# georedis — unified demo launcher
+# proxima — unified demo launcher
 #
 # Starts ALL demo components in one command:
 #
 #  Redis (Docker)
-#  ├── georedis-demo      :3000  OpenSky aircraft tracker
-#  └── georedis-weather   :3001  Live METAR weather (streams every 60 s)
+#  ├── proxima-demo      :3000  OpenSky aircraft tracker
+#  └── proxima-weather   :3001  Live METAR weather (streams every 60 s)
 #
 #  Vite dev servers
 #  ├── :5173  OpenSky tracker UI
@@ -71,7 +71,7 @@ foreach ($dir in @("demo/ui", "demo/cluster-ui")) {
 # ── Build Rust binaries ───────────────────────────────────────────────────
 if (-not $SkipBuild) {
     Write-Host "Building backends (first build ~60s)..." -ForegroundColor Yellow
-    cargo build --release -p georedis-demo -p georedis-weather
+    cargo build --release -p proxima-demo -p proxima-weather
     if ($LASTEXITCODE -ne 0) { Write-Error "Cargo build failed"; exit 1 }
 }
 
@@ -83,17 +83,17 @@ Get-Content .env | Where-Object { $_ -match "^\s*[^#]\S+=\S" } | ForEach-Object 
 
 # ── OpenSky demo server — :3000 ───────────────────────────────────────────
 Write-Host "Starting OpenSky server    → :3000" -ForegroundColor Yellow
-$env:SERVER_PORT = "3000"; $env:SQLITE_PATH = "georedis.db"
+$env:SERVER_PORT = "3000"; $env:SQLITE_PATH = "proxima.db"
 $env:REDIS_URL   = if ($env:REDIS_URL) { $env:REDIS_URL } else { "redis://127.0.0.1:6379" }
-$p0 = Start-Process -FilePath ".\target\release\georedis-demo.exe" `
+$p0 = Start-Process -FilePath ".\target\release\proxima-demo.exe" `
     -RedirectStandardOutput ".\target\demo-stdout.log" `
     -RedirectStandardError  ".\target\demo-stderr.log" -PassThru -NoNewWindow
 
 # ── Weather server — :3001 ────────────────────────────────────────────────
 Write-Host "Starting Weather server    → :3001" -ForegroundColor Yellow
-$env:SERVER_PORT = "3001"; $env:SQLITE_PATH = "georedis-weather.db"
+$env:SERVER_PORT = "3001"; $env:SQLITE_PATH = "proxima-weather.db"
 $env:REDIS_URL   = "redis://127.0.0.1:6379/1"
-$p1 = Start-Process -FilePath ".\target\release\georedis-weather.exe" `
+$p1 = Start-Process -FilePath ".\target\release\proxima-weather.exe" `
     -RedirectStandardOutput ".\target\weather-stdout.log" `
     -RedirectStandardError  ".\target\weather-stderr.log" -PassThru -NoNewWindow
 

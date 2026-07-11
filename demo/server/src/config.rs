@@ -20,8 +20,8 @@ impl Config {
             server_port:        env_parse("SERVER_PORT",   3000),
             poll_interval_secs: env_parse("POLL_INTERVAL_SECS", 30),
             s2_level:           env_parse("S2_LEVEL",      9),
-            sqlite_path:        env("SQLITE_PATH",         "georedis.db"),
-            entity_ttl_secs:    env_parse("ENTITY_TTL_SECS", georedis::store::DEFAULT_ENTITY_TTL_SECS),
+            sqlite_path:        env("SQLITE_PATH",         "proxima.db"),
+            entity_ttl_secs:    env_parse("ENTITY_TTL_SECS", proxima::store::DEFAULT_ENTITY_TTL_SECS),
         }
     }
 }

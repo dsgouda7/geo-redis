@@ -17,7 +17,7 @@
 /// the georedis lib handles without any changes (GeoEntry.id is already String).
 
 use std::collections::HashMap;
-use georedis::GeoTrie;
+use proxima::GeoTrie;
 use crate::metar_bulk::{self, BulkMETAR};
 
 /// One aggregated weather cluster ready to be inserted into the georedis trie.

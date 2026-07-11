@@ -1,4 +1,4 @@
-/// georedis cluster integration test
+/// proxima cluster integration test
 ///
 /// Tests the full shard-split lifecycle at the library level using real Redis
 /// containers (via testcontainers).  No geo-node HTTP server is needed — the
@@ -18,11 +18,11 @@
 ///   7. CONSISTENCY      — assert total key count equals expected, no duplicates
 ///
 /// Run:
-///   cargo run -p georedis-cluster-test
-///   cargo run -p georedis-cluster-test -- --verbose
+///   cargo run -p proxima-cluster-test
+///   cargo run -p proxima-cluster-test -- --verbose
 
 use anyhow::Result;
-use georedis::{GeoEntry, GeoTrie, Metrics, RedisStore};
+use proxima::{GeoEntry, GeoTrie, Metrics, RedisStore};
 use rand::{Rng, SeedableRng};
 use serde_json::json;
 use std::{sync::Arc, time::{Duration, Instant}};
@@ -42,14 +42,14 @@ const SPLIT_PREFIX:       &str  = "8";  // token >= "8" → shard-1
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env()
-            .add_directive("georedis_cluster_test=info".parse().unwrap()))
+            .add_directive("proxima_cluster_test=info".parse().unwrap()))
         .init();
 
     let verbose = std::env::args().any(|a| a == "--verbose");
 
     println!();
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║          georedis Cluster Integration Test                   ║");
+    println!("║          proxima Cluster Integration Test                   ║");
     println!("║  Phases: setup → high-load → split seed → delta-sync        ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
     println!();

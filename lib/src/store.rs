@@ -7,6 +7,13 @@ use crate::{GeoEntry, GeoTrie, Metrics, Result};
 pub const DEFAULT_ENTITY_TTL_SECS: u64 = 600;
 const CHUNK_SIZE: usize = 400;
 
+// Compile-time proof that RedisStore is safe to share across async tasks.
+const _: () = {
+    fn assert_send_sync<T: Send + Sync>() {}
+    fn check() { assert_send_sync::<RedisStore>(); }
+    let _ = check;
+};
+
 /// Atomically:
 ///   1. Delete cell keys that are in `active_cells` but absent from the new set.
 ///   2. Replace `active_cells` with the new set.
@@ -72,12 +79,12 @@ impl RedisStore {
         Ok(Self {
             client: redis::Client::open(redis_url)?,
             metrics,
-            key_prefix: "georedis".into(),
+            key_prefix: "proxima".into(),
             entity_ttl_secs,
         })
     }
 
-    /// Override the Redis key namespace (default: `"georedis"`).
+    /// Override the Redis key namespace (default: `"proxima"`).
     ///
     /// Multiple logical tenants can share one Redis instance without key
     /// collisions by using distinct namespaces:
@@ -88,6 +95,12 @@ impl RedisStore {
         self.key_prefix = namespace.into();
         self
     }
+
+    /// Returns the Redis key namespace used by this store (default: `"proxima"`).
+    ///
+    /// Use this when writing Redis keys directly (e.g. in a custom ingest path)
+    /// so all keys stay under the same namespace prefix.
+    pub fn key_prefix(&self) -> &str { &self.key_prefix }
 
     /// Persists all trie entries to Redis.
     ///
@@ -386,19 +399,25 @@ impl RedisStore {
 
         if ids.is_empty() { return Ok(vec![]); }
 
-        // Filter to the prefix range by looking up each entity's cell token.
-        let mut in_range_ids: Vec<String> = Vec::with_capacity(ids.len());
+        // ── Pipeline all location lookups in one round-trip ────────────────
+        // Original code looped with individual GET calls (O(N) round-trips).
+        // Pipeline reduces this to a single network round-trip regardless of
+        // how many IDs the ZRANGEBYSCORE returns.
+        let mut loc_pipe = redis::pipe();
         for id in &ids {
-            let token: Option<String> = conn
-                .get(format!("{prefix}:location:{id}"))
-                .await
-                .unwrap_or(None);
-            if let Some(tok) = token {
-                let ge = prefix_start.is_empty() || tok.as_str() >= prefix_start;
-                let lt = prefix_end.is_empty()   || tok.as_str() <  prefix_end;
-                if ge && lt { in_range_ids.push(id.clone()); }
-            }
+            loc_pipe.get(format!("{prefix}:location:{id}"));
         }
+        let tokens: Vec<Option<String>> = loc_pipe.query_async(&mut conn).await?;
+
+        let in_range_ids: Vec<String> = ids.iter().zip(tokens.iter())
+            .filter_map(|(id, tok)| {
+                tok.as_ref().and_then(|t| {
+                    let ge = prefix_start.is_empty() || t.as_str() >= prefix_start;
+                    let lt = prefix_end.is_empty()   || t.as_str() <  prefix_end;
+                    if ge && lt { Some(id.clone()) } else { None }
+                })
+            })
+            .collect();
 
         if in_range_ids.is_empty() { return Ok(vec![]); }
 
@@ -416,6 +435,90 @@ impl RedisStore {
             .collect();
 
         Ok(entries)
+    }
+}
+
+// ── GeoStore trait ─────────────────────────────────────────────────────────
+
+/// Async abstraction over the geospatial persistence layer.
+///
+/// `RedisStore` implements this trait. Define your own implementation to
+/// inject an in-memory mock in unit tests without requiring a running Redis:
+///
+/// ```ignore
+/// use proxima::{GeoStore, GeoEntry, GeoTrie, Metrics, Result};
+/// use std::sync::Arc;
+///
+/// struct MockStore;
+/// impl GeoStore for MockStore {
+///     async fn merge_entries(&self, _: &[GeoEntry], _: u8) -> Result<usize> { Ok(0) }
+///     async fn entities_written_after(&self, ..) -> Result<Vec<GeoEntry>> { Ok(vec![]) }
+///     async fn prune_written_at(&self) -> Result<usize> { Ok(0) }
+///     async fn persist_trie(&self, _: &GeoTrie) -> Result<()> { Ok(()) }
+///     async fn query_region(&self, _: &[String]) -> Result<Vec<GeoEntry>> { Ok(vec![]) }
+///     fn metrics(&self) -> &Arc<Metrics> { unimplemented!() }
+/// }
+/// ```
+///
+/// ## `Send + Sync` contract
+///
+/// All implementations **must** be `Send + Sync` so they can be wrapped in
+/// `Arc<dyn GeoStore + Send + Sync>` and shared across Tokio tasks.  The
+/// generated async futures are also required to be `Send` — this is enforced
+/// automatically when the implementor itself is `Send + Sync`.
+pub trait GeoStore: Send + Sync {
+    /// Idempotent, freshness-ordered upsert.
+    ///
+    /// An entry is written only when `entry.written_at ≥` the score already
+    /// in the `written_at` sorted set.  A stale snapshot can never overwrite
+    /// a live write.  Returns the number of entries actually written.
+    async fn merge_entries(&self, entries: &[GeoEntry], s2_level: u8) -> Result<usize>;
+
+    /// Returns every entity in `[prefix_start, prefix_end)` whose `written_at`
+    /// timestamp is strictly greater than `since_ms`.
+    ///
+    /// Used for delta-sync catch-up on bootstrapping shards.
+    async fn entities_written_after(
+        &self,
+        since_ms:     u64,
+        prefix_start: &str,
+        prefix_end:   &str,
+    ) -> Result<Vec<GeoEntry>>;
+
+    /// Scans the `written_at` sorted set and removes members whose backing
+    /// entity key has already expired.  Call periodically to keep ZSET bounded.
+    async fn prune_written_at(&self) -> Result<usize>;
+
+    /// Bulk-replaces the entire active entity set from a `GeoTrie` snapshot.
+    async fn persist_trie(&self, trie: &GeoTrie) -> Result<()>;
+
+    /// Returns all entities whose S2 cell tokens appear in `tokens`.
+    async fn query_region(&self, tokens: &[String]) -> Result<Vec<GeoEntry>>;
+
+    /// Access runtime read/write latency metrics.
+    fn metrics(&self) -> &Arc<Metrics>;
+}
+
+impl GeoStore for RedisStore {
+    async fn merge_entries(&self, entries: &[GeoEntry], s2_level: u8) -> Result<usize> {
+        self.merge_entries(entries, s2_level).await
+    }
+    async fn entities_written_after(
+        &self, since_ms: u64, prefix_start: &str, prefix_end: &str,
+    ) -> Result<Vec<GeoEntry>> {
+        self.entities_written_after(since_ms, prefix_start, prefix_end).await
+    }
+    async fn prune_written_at(&self) -> Result<usize> {
+        self.prune_written_at().await
+    }
+    async fn persist_trie(&self, trie: &GeoTrie) -> Result<()> {
+        self.persist_trie(trie).await
+    }
+    async fn query_region(&self, tokens: &[String]) -> Result<Vec<GeoEntry>> {
+        self.query_region(tokens).await
+    }
+    fn metrics(&self) -> &Arc<Metrics> {
+        self.metrics()
     }
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# georedis — unified demo launcher (Linux / macOS)
+# proxima — unified demo launcher (Linux / macOS)
 #
 # Usage:
 #   ./scripts/run-demo.sh                   # starts all servers + UIs
@@ -49,24 +49,24 @@ done
 # ── Build Rust binaries ───────────────────────────────────────────────────
 if [[ $SKIP_BUILD -eq 0 ]]; then
   info "Building backends (first build ~60s)..."
-  cargo build --release -p georedis-demo -p georedis-weather
+  cargo build --release -p proxima-demo -p proxima-weather
 fi
 
 mkdir -p target
 
 # ── Servers ───────────────────────────────────────────────────────────────
 info "Starting OpenSky server    → :3000"
-SERVER_PORT=3000 SQLITE_PATH=georedis.db \
+SERVER_PORT=3000 SQLITE_PATH=proxima.db \
   REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}" \
-  ./target/release/georedis-demo \
+  ./target/release/proxima-demo \
   >target/demo-stdout.log 2>target/demo-stderr.log &
 P_DEMO=$!
 
 info "Starting Weather server    → :3001"
-SERVER_PORT=3001 SQLITE_PATH=georedis-weather.db \
+SERVER_PORT=3001 SQLITE_PATH=proxima-weather.db \
   REDIS_URL=redis://127.0.0.1:6379/1 \
   WEATHER_POLL_SECS=60 \
-  ./target/release/georedis-weather \
+  ./target/release/proxima-weather \
   >target/weather-stdout.log 2>target/weather-stderr.log &
 P_WEATHER=$!
 

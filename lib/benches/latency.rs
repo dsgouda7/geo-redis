@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use georedis::{GeoEntry, GeoTrie};
+use proxima::{GeoEntry, GeoTrie};
 use serde_json::json;
 
 fn bench_insert(c: &mut Criterion) {

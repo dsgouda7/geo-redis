@@ -1,10 +1,10 @@
 [package]
-name    = "georedis-demo"
+name    = "proxima-demo"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-georedis           = { path = "../../lib" }
+proxima            = { path = "../../lib" }
 tokio              = { version = "1", features = ["full"] }
 axum               = "0.7"
 tower-http         = { version = "0.5", features = ["cors"] }

@@ -1,10 +1,9 @@
-//! gRPC service for geo-node — fully functional without protoc or code generation.
 //! Proto message types are defined with prost derives to match docs/proto/georedis.proto.
 //! Serves on a dedicated port (default: HTTP_PORT + 10).
 
 use std::sync::Arc;
 use tonic::{async_trait, codegen::*, Request, Response, Status};
-use georedis::GeoEntry;
+use proxima::GeoEntry;
 use redis::AsyncCommands;
 use crate::{cell_token, viewport_tokens};
 
@@ -96,13 +95,14 @@ impl GeoRedisGrpc for GeoRedisService {
         let mut conn = self.state.redis.get_multiplexed_async_connection().await
             .map_err(|e| Status::internal(e.to_string()))?;
         let new_tok = cell_token(e.lat, e.lon, s2l);
-        let ak  = format!("georedis:entity:{}", e.id);
-        let ck  = format!("georedis:cell:{new_tok}");
-        let loc = format!("georedis:location:{}", e.id);
+        let kp  = self.state.store.key_prefix();
+        let ak  = format!("{kp}:entity:{}", e.id);
+        let ck  = format!("{kp}:cell:{new_tok}");
+        let loc = format!("{kp}:location:{}", e.id);
         let js  = serde_json::to_string(&geo).unwrap_or_default();
         if let Ok(Some(old)) = conn.get::<_, Option<String>>(&loc).await {
             if old != new_tok {
-                let _: () = conn.srem(format!("georedis:cell:{old}"), &e.id).await.unwrap_or(());
+                let _: () = conn.srem(format!("{}:cell:{old}", self.state.store.key_prefix()), &e.id).await.unwrap_or(());
             }
         }
         let mut pipe = redis::pipe();
@@ -123,10 +123,11 @@ impl GeoRedisGrpc for GeoRedisService {
         let tokens = viewport_tokens(r.south, r.west, r.north, r.east, self.state.cfg.s2_level);
         let mut conn = self.state.redis.get_multiplexed_async_connection().await
             .map_err(|e| Status::internal(e.to_string()))?;
-        let cell_keys: Vec<String> = tokens.iter().map(|t| format!("georedis:cell:{t}")).collect();
+        let kp       = self.state.store.key_prefix();
+        let cell_keys: Vec<String> = tokens.iter().map(|t| format!("{kp}:cell:{t}")).collect();
         let ids: Vec<String> = conn.sunion(cell_keys).await.unwrap_or_default();
         let mut pipe = redis::pipe();
-        for id in &ids { pipe.get(format!("georedis:aircraft:{id}")); }
+        for id in &ids { pipe.get(format!("{}:entity:{id}", self.state.store.key_prefix())); }
         let jsons: Vec<Option<String>> = pipe.query_async(&mut conn).await.unwrap_or_default();
         let entries: Vec<GrpcGeoEntry> = jsons.into_iter().flatten()
             .filter_map(|j| serde_json::from_str::<GeoEntry>(&j).ok())
@@ -175,7 +176,7 @@ impl<T: GeoRedisGrpc> Clone for GeoRedisServer<T> {
 }
 
 impl<T: GeoRedisGrpc> tonic::server::NamedService for GeoRedisServer<T> {
-    const NAME: &'static str = "georedis.v1.GeoRedis";
+    const NAME: &'static str = "proxima.v1.GeoRedis";
 }
 
 impl<T, B> Service<http::Request<B>> for GeoRedisServer<T>

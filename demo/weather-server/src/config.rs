@@ -25,8 +25,8 @@ impl Config {
             server_port:        env_parse("SERVER_PORT",   3001),
             poll_interval_secs: env_parse("WEATHER_POLL_SECS", 60u64),
             s2_level:           env_parse("S2_LEVEL",      9),
-            sqlite_path:        env("SQLITE_PATH",         "georedis-weather.db"),
-            entity_ttl_secs:    env_parse("ENTITY_TTL_SECS", georedis::store::DEFAULT_ENTITY_TTL_SECS),
+            sqlite_path:        env("SQLITE_PATH",         "proxima-weather.db"),
+            entity_ttl_secs:    env_parse("ENTITY_TTL_SECS", proxima::store::DEFAULT_ENTITY_TTL_SECS),
             stream_rate_ms:     env_parse("STREAM_RATE_MS",  5u64),
             max_clusters:       env_parse("MAX_CLUSTERS",    100usize),
             cluster_level:      std::env::var("CLUSTER_LEVEL").ok()

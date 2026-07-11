@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::{routing::get, Router};
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
-use georedis::{GeoEntry, GeoTrie, Metrics, RedisStore};
+use proxima::{GeoEntry, GeoTrie, Metrics, RedisStore};
 use config::Config;
 
 pub struct AppState {

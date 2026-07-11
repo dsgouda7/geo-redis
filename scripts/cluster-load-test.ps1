@@ -1,4 +1,4 @@
-# georedis Cluster Load Test — live dashboard + split/merge demo
+# proxima Cluster Load Test — live dashboard + split/merge demo
 #
 # What this does:
 #   Phase 1  SETUP      — Build binaries, start 4-node cluster, wait for gossip
@@ -91,7 +91,7 @@ function Draw-Dashboard {
     function Box { param($t, $c = "Cyan") Write-Host $t.PadRight($w) -ForegroundColor $c -NoNewline; Write-Host "" }
 
     Box "╔$('═' * ($w-2))╗"
-    Box "║  georedis Cluster Load Test — $((Get-Date).ToString('HH:mm:ss'))   Phase: $($script:phase.PadRight(14)) $('▶' * 1)  ║"
+    Box "║  proxima Cluster Load Test — $((Get-Date).ToString('HH:mm:ss'))   Phase: $($script:phase.PadRight(14)) $('▶' * 1)  ║"
     Box "╠$('═' * ($w-2))╣"
     Box "║  $('NODE'.PadRight(14)) $('STATUS'.PadRight(14)) $('KEYS'.PadLeft(9))  $('PREFIX RANGE'.PadRight(22)) $('MEM'.PadLeft(7))  ║"
     Box "╠$('═' * ($w-2))╣"
@@ -155,7 +155,7 @@ function New-RandomEntity {
 
 function Start-LoadJob { param($wps, $shardSpecs)
     # Launch the loadtest binary as a background job
-    $exe    = ".\target\release\georedis-loadtest.exe"
+    $exe    = ".\target\release\proxima-loadtest.exe"
     $args   = "--writers 4 --readers 8 --batch-size $([Math]::Max(1,$wps/4)) --duration-secs 999"
     if ($shardSpecs) { $args += " --shards `"$shardSpecs`"" }
     $script:loadJob = Start-Job -ScriptBlock {
@@ -245,7 +245,7 @@ Log-Event "Building release binaries (geo-node + loadtest)..."
 
 if (-not $SkipBuild) {
     $env:PATH += ";$env:USERPROFILE\.cargo\bin"
-    $buildResult = cargo build --release -p georedis-geo-node -p georedis-loadtest 2>&1
+    $buildResult = cargo build --release -p proxima-geo-node -p proxima-loadtest 2>&1
     if ($LASTEXITCODE -ne 0) {
         $script:testPassed = $false
         Log-Event "Build failed — check output" "Red"
@@ -317,7 +317,7 @@ Log-Event "Phase: high-load — loadtest binary, ~$SplitThreshold entity target 
 Draw-Dashboard
 
 # Launch the compiled loadtest binary (handles throughput much better than PS)
-$loadExe = ".\target\release\georedis-loadtest.exe"
+$loadExe = ".\target\release\proxima-loadtest.exe"
 if (Test-Path $loadExe) {
     $loadArgs = @("--writers", "4", "--readers", "8",
                   "--batch-size", "500",

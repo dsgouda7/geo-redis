@@ -39,7 +39,7 @@ pub async fn download_and_parse(client: &reqwest::Client) -> anyhow::Result<Vec<
     let bytes = client
         .get(BULK_URL)
         .timeout(std::time::Duration::from_secs(60))
-        .header("User-Agent", "georedis-weather-demo/1.0")
+        .header("User-Agent", "proxima-weather-demo/1.0")
         .send()
         .await?
         .bytes()

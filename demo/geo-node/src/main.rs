@@ -14,11 +14,11 @@ use axum::{
 
 mod grpc;
 mod snapshot;
-use georedis::{
+use proxima::{
     cluster::{ClusterRing, NodeInfo, NodeStatus},
     GeoEntry,
 };
-use georedis::{Metrics, RedisStore};
+use proxima::{Metrics, RedisStore};
 use rand::seq::SliceRandom;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
@@ -301,12 +301,12 @@ async fn take_snapshot(state: &AppState, snap: &snapshot::Snapshot) -> anyhow::R
 
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg("georedis:entity:*").arg("COUNT").arg(200)
+            .arg(cursor).arg("MATCH").arg(format!("{}:entity:*", state.store.key_prefix())).arg("COUNT").arg(200)
             .query_async(&mut conn).await?;
 
         for key in keys {
             if let Ok(Some(json)) = conn.get::<_, Option<String>>(&key).await {
-                if let Ok(entry) = serde_json::from_str::<georedis::GeoEntry>(&json) {
+                if let Ok(entry) = serde_json::from_str::<proxima::GeoEntry>(&json) {
                     let token = cell_token(entry.lat, entry.lon, state.cfg.s2_level);
                     entries.push(snapshot::SnapshotEntry {
                         id:          entry.id,
@@ -367,8 +367,8 @@ async fn restore_from_snapshot(
 
     // Convert SnapshotEntries → GeoEntries and use the lib's merge_entries
     // so the written_at index is maintained on restore too.
-    let geo_entries: Vec<georedis::GeoEntry> = valid.iter()
-        .filter_map(|e| serde_json::from_str::<georedis::GeoEntry>(&e.json).ok())
+    let geo_entries: Vec<proxima::GeoEntry> = valid.iter()
+        .filter_map(|e| serde_json::from_str::<proxima::GeoEntry>(&e.json).ok())
         .collect();
     state.store.merge_entries(&geo_entries, state.cfg.s2_level).await
         .map_err(|e| anyhow::anyhow!("Snapshot restore merge failed: {e}"))?;
@@ -781,7 +781,7 @@ async fn find_median_split(s: &AppState) -> Result<String> {
 
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg("georedis:entity:*").arg("COUNT").arg(200)
+            .arg(cursor).arg("MATCH").arg(format!("{}:entity:*", s.store.key_prefix())).arg("COUNT").arg(200)
             .query_async(&mut conn).await?;
 
         for key in keys {
@@ -830,7 +830,7 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
 
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg("georedis:entity:*").arg("COUNT").arg(200)
+            .arg(cursor).arg("MATCH").arg(format!("{}:entity:*", s.store.key_prefix())).arg("COUNT").arg(200)
             .query_async(&mut conn).await?;
 
         for key in keys {
@@ -890,11 +890,12 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
     cursor = 0;
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg("georedis:cell:*").arg("COUNT").arg(200)
+            .arg(cursor).arg("MATCH").arg(format!("{}:cell:*", s.store.key_prefix())).arg("COUNT").arg(200)
             .query_async(&mut conn).await?;
 
         for key in &keys {
-            let token = key.trim_start_matches("georedis:cell:");
+            let kp = format!("{}:cell:", s.store.key_prefix());
+            let token = key.trim_start_matches(kp.as_str());
             if token >= split_point {
                 let members: Vec<String> = conn.smembers(key).await?;
                 if !members.is_empty() {
@@ -926,7 +927,7 @@ async fn post_ingest(s: &AppState, target: &str, entries: Vec<GeoEntry>) -> Resu
 // ── Ingest (receive migrated keys) ────────────────────────────────────────
 //
 // Uniqueness guarantee: each entity ID exists in exactly ONE cell at all times.
-// On every write, we check georedis:location:{id} for the entity's previous
+// On every write, we check {prefix}:location:{id} for the entity's previous
 // cell token. If it has moved to a new cell, we SREM it from the old cell
 // immediately — no TTL dependency.
 
@@ -951,7 +952,7 @@ async fn route_ingest_batch(
     };
 
     let ttl          = s.cfg.entity_ttl_secs as u64;
-    let prefix       = "georedis";
+    let prefix       = s.store.key_prefix();
     let now_ms       = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1027,7 +1028,7 @@ async fn route_ingest_cell(
     Json(req): Json<IngestCellRequest>,
 ) -> StatusCode {
     if let Ok(mut conn) = s.redis.get_multiplexed_async_connection().await {
-        let key = format!("georedis:cell:{}", req.token);
+        let key = format!("{}:cell:{}", s.store.key_prefix(), req.token);
         for id in &req.ids {
             let _: () = conn.sadd(&key, id).await.unwrap_or(());
         }
@@ -1076,8 +1077,8 @@ async fn route_ingest_snapshot(
     // 2. Merge into Redis using the lib's freshness-ordered primitive.
     //    This is the same path used for delta-sync catch-up — idempotent
     //    and safe to retry.
-    let geo_entries: Vec<georedis::GeoEntry> = entries.iter()
-        .filter_map(|e| serde_json::from_str::<georedis::GeoEntry>(&e.json).ok())
+    let geo_entries: Vec<proxima::GeoEntry> = entries.iter()
+        .filter_map(|e| serde_json::from_str::<proxima::GeoEntry>(&e.json).ok())
         .collect();
     if let Err(e) = s.store.merge_entries(&geo_entries, s.cfg.s2_level).await {
         tracing::error!("Redis merge failed during split ingest: {e}");
@@ -1155,7 +1156,7 @@ async fn route_assign_range(
         if let Ok(mut conn) = s.redis.get_multiplexed_async_connection().await {
             let old_start = s.my_info.read().await.prefix_start.clone();
             if !old_start.is_empty() {
-                let lock_key = format!("georedis:range_claim:{old_start}");
+                let lock_key = format!("{}:range_claim:{old_start}", s.store.key_prefix());
                 let _: () = conn.del(&lock_key).await.unwrap_or(());
             }
         }
@@ -1175,7 +1176,7 @@ async fn route_assign_range(
     // with the correct target.  The lock TTL (120 s) ensures it auto-releases
     // if this node crashes before transitioning to Active.
     {
-        let lock_key = format!("georedis:range_claim:{}", req.prefix_start);
+        let lock_key = format!("{}:range_claim:{}", s.store.key_prefix(), req.prefix_start);
         let node_id  = s.cfg.node_id.clone();
         match s.redis.get_multiplexed_async_connection().await {
             Ok(mut conn) => {
@@ -1279,7 +1280,7 @@ async fn bootstrap_delta_sync(
     // was to prevent a second node from stealing the same range during bootstrap.
     // (The 120 s TTL is just the safety-net if we crash before reaching here.)
     if let Ok(mut conn) = s.redis.get_multiplexed_async_connection().await {
-        let lock_key = format!("georedis:range_claim:{prefix_start}");
+        let lock_key = format!("{}:range_claim:{prefix_start}", s.store.key_prefix());
         let _: () = conn.del(&lock_key).await.unwrap_or(());
     }
 }
@@ -1315,11 +1316,11 @@ async fn route_delete_entity(
         return StatusCode::SERVICE_UNAVAILABLE;
     };
 
-    let entity_key = format!("georedis:entity:{id}");
-    let loc_key      = format!("georedis:location:{id}");
+    let entity_key = format!("{}:entity:{id}", s.store.key_prefix());
+    let loc_key    = format!("{}:location:{id}", s.store.key_prefix());
 
     if let Some(token) = p.token {
-        let cell_key = format!("georedis:cell:{token}");
+        let cell_key = format!("{}:cell:{token}", s.store.key_prefix());
         let _: () = conn.del(&entity_key).await.unwrap_or(());
         let _: () = conn.del(&loc_key).await.unwrap_or(());
         let _: () = conn.srem(&cell_key, &id).await.unwrap_or(());
@@ -1330,7 +1331,7 @@ async fn route_delete_entity(
         let mut cursor = 0u64;
         loop {
             let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-                .arg(cursor).arg("MATCH").arg("georedis:cell:*").arg("COUNT").arg(200)
+                .arg(cursor).arg("MATCH").arg(format!("{}:cell:*", s.store.key_prefix())).arg("COUNT").arg(200)
                 .query_async(&mut conn).await.unwrap_or((0, vec![]));
             for key in keys {
                 let _: () = conn.srem(&key, &id).await.unwrap_or(());
@@ -1415,22 +1416,22 @@ async fn route_metrics_prometheus(State(s): State<AppState>) -> (HeaderMap, Stri
     let prefix = format!("[{}, {})", my.prefix_start, my.prefix_end);
 
     let mut out = format!(
-        "# HELP georedis_key_count Entities in shard\n\
-         # TYPE georedis_key_count gauge\n\
-         georedis_key_count{{node_id=\"{node}\",prefix=\"{prefix}\"}} {}\n\
-         # HELP georedis_mem_bytes Redis memory used\n\
-         # TYPE georedis_mem_bytes gauge\n\
-         georedis_mem_bytes{{node_id=\"{node}\"}} {}\n",
+        "# HELP proxima_key_count Entities in shard\n\
+         # TYPE proxima_key_count gauge\n\
+         proxima_key_count{{node_id=\"{node}\",prefix=\"{prefix}\"}} {}\n\
+         # HELP proxima_mem_bytes Redis memory used\n\
+         # TYPE proxima_mem_bytes gauge\n\
+         proxima_mem_bytes{{node_id=\"{node}\"}} {}\n",
         my.key_count, my.mem_bytes
     );
     if let Some((count, dur_ms, ts)) = snap {
         out.push_str(&format!(
-            "# TYPE georedis_snapshot_entities gauge\n\
-             georedis_snapshot_entities{{node_id=\"{node}\"}} {count}\n\
-             # TYPE georedis_snapshot_duration_ms gauge\n\
-             georedis_snapshot_duration_ms{{node_id=\"{node}\"}} {dur_ms}\n\
-             # TYPE georedis_snapshot_ts gauge\n\
-             georedis_snapshot_ts{{node_id=\"{node}\"}} {ts}\n"
+            "# TYPE proxima_snapshot_entities gauge\n\
+             proxima_snapshot_entities{{node_id=\"{node}\"}} {count}\n\
+             # TYPE proxima_snapshot_duration_ms gauge\n\
+             proxima_snapshot_duration_ms{{node_id=\"{node}\"}} {dur_ms}\n\
+             # TYPE proxima_snapshot_ts gauge\n\
+             proxima_snapshot_ts{{node_id=\"{node}\"}} {ts}\n"
         ));
     }
     let mut headers = HeaderMap::new();

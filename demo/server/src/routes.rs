@@ -5,7 +5,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use s2::{cap::Cap, latlng::LatLng, point::Point, region::RegionCoverer, s1};
-use georedis::GeoEntry;
+use proxima::GeoEntry;
 use crate::AppState;
 
 #[derive(Serialize)]

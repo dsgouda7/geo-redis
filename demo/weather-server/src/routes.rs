@@ -7,7 +7,7 @@ use futures_util::stream;
 use serde::{Deserialize, Serialize};
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use s2::{cap::Cap, latlng::LatLng, point::Point, region::RegionCoverer, s1};
-use georedis::GeoEntry;
+use proxima::GeoEntry;
 use crate::{open_meteo, AppState};
 
 #[derive(Serialize)]

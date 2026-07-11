@@ -1,6 +1,17 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
+// Compile-time assertion: ClusterRing and NodeInfo must be Send + Sync so they
+// can be shared across Tokio tasks behind Arc<RwLock<_>>.
+const _: () = {
+    fn assert_send_sync<T: Send + Sync>() {}
+    fn check() {
+        assert_send_sync::<NodeInfo>();
+        assert_send_sync::<ClusterRing>();
+    }
+    let _ = check;
+};
+
 /// One shard node in the geo-cluster ring.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeInfo {
@@ -21,6 +32,11 @@ pub struct NodeInfo {
     pub last_seen_secs: u64,
 }
 
+/// Node lifecycle state.
+///
+/// `#[non_exhaustive]` ensures that adding new variants in future releases
+/// is not a semver-breaking change for downstream match statements.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeStatus {
