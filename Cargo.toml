@@ -15,4 +15,4 @@ tokio      = { version = "1", features = ["full"] }
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing    = "0.1"
-redis      = { version = "0.26", features = ["tokio-comp", "connection-manager"] }
+redis      = { version = "0.26", features = ["tokio-comp", "connection-manager", "cluster-async"] }

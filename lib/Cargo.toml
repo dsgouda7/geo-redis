@@ -11,7 +11,7 @@ categories  = ["data-structures", "database"]
 [dependencies]
 s2            = "0.0.10"
 hdrhistogram  = "7"
-redis         = { workspace = true }
+redis         = { workspace = true, features = ["cluster-async"] }
 tokio         = { workspace = true }
 serde         = { workspace = true }
 serde_json    = { workspace = true }

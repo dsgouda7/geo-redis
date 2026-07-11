@@ -65,6 +65,11 @@ struct Config {
     /// Override via KEY_NAMESPACE env var for multi-tenant isolation
     /// (multiple logical datasets on the same Redis instance).
     key_namespace:    String,
+    /// Comma-separated Redis Cluster node URLs.
+    /// When non-empty, the store uses redis::cluster::ClusterClient.
+    /// All keys use {namespace} hash tags, so SUNION/Lua/pipelines work.
+    /// Example: redis://node1:6379,redis://node2:6379,redis://node3:6379
+    redis_cluster_urls: Vec<String>,
     /// Port for the gRPC server. Defaults to http_port + 10.
     grpc_port:        u16,
 }
@@ -95,6 +100,9 @@ impl Config {
             snapshot_interval_secs: env_parse("SNAPSHOT_INTERVAL_SECS", 300u64),
             entity_ttl_secs:        env_parse("ENTITY_TTL_SECS",        120u64),            api_key:            env("API_KEY",                       ""),
             key_namespace:      env("KEY_NAMESPACE",              "proxima"),
+            redis_cluster_urls: env("REDIS_CLUSTER_URLS", "")
+                .split(',').map(str::trim).filter(|s| !s.is_empty())
+                .map(String::from).collect(),
             grpc_port:          env_parse("GRPC_PORT",               port + 10),        }
     }
 }
@@ -149,14 +157,22 @@ impl AppState {
         };
         let mut ring = ClusterRing::default();
         ring.merge(my.clone());
-        let store = Arc::new(
+        let store = Arc::new(if cfg.redis_cluster_urls.is_empty() {
             RedisStore::with_config(
                 cfg.redis_url.as_str(),
                 Metrics::new(),
                 cfg.entity_ttl_secs,
             ).expect("RedisStore init")
-            .with_namespace(&cfg.key_namespace),
-        );
+            .with_namespace(&cfg.key_namespace)
+        } else {
+            tracing::info!("Using Redis Cluster mode: {} nodes", cfg.redis_cluster_urls.len());
+            RedisStore::new_cluster(
+                cfg.redis_cluster_urls.clone(),
+                Metrics::new(),
+                cfg.entity_ttl_secs,
+            ).expect("RedisStore cluster init")
+            .with_namespace(&cfg.key_namespace)
+        });
         Ok(Self {
             cfg,
             ring:    Arc::new(RwLock::new(ring)),
@@ -307,7 +323,7 @@ async fn take_snapshot(state: &AppState, snap: &snapshot::Snapshot) -> anyhow::R
 
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg(format!("{}:entity:*", state.store.key_prefix())).arg("COUNT").arg(200)
+            .arg(cursor).arg("MATCH").arg(state.store.k_entity_pattern()).arg("COUNT").arg(200)
             .query_async(&mut conn).await?;
 
         for key in keys {
@@ -787,7 +803,7 @@ async fn find_median_split(s: &AppState) -> Result<String> {
 
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg(format!("{}:entity:*", s.store.key_prefix())).arg("COUNT").arg(200)
+            .arg(cursor).arg("MATCH").arg(s.store.k_entity_pattern()).arg("COUNT").arg(200)
             .query_async(&mut conn).await?;
 
         for key in keys {
@@ -836,7 +852,7 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
 
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg(format!("{}:entity:*", s.store.key_prefix())).arg("COUNT").arg(200)
+            .arg(cursor).arg("MATCH").arg(s.store.k_entity_pattern()).arg("COUNT").arg(200)
             .query_async(&mut conn).await?;
 
         for key in keys {
@@ -896,11 +912,11 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
     cursor = 0;
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg(format!("{}:cell:*", s.store.key_prefix())).arg("COUNT").arg(200)
+            .arg(cursor).arg("MATCH").arg(s.store.k_cell_pattern()).arg("COUNT").arg(200)
             .query_async(&mut conn).await?;
 
         for key in &keys {
-            let kp = format!("{}:cell:", s.store.key_prefix());
+            let kp = format!("{{{}}}:cell:", s.store.key_prefix());
             let token = key.trim_start_matches(kp.as_str());
             if token >= split_point {
                 let members: Vec<String> = conn.smembers(key).await?;
@@ -957,13 +973,10 @@ async fn route_ingest_batch(
         return StatusCode::SERVICE_UNAVAILABLE;
     };
 
-    let ttl          = s.cfg.entity_ttl_secs as u64;
-    let prefix       = s.store.key_prefix();
-    let now_ms       = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    let written_at_key = format!("{prefix}:written_at");
+    let ttl      = s.cfg.entity_ttl_secs as u64;
+    let now_ms   = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    let written_at_key = s.store.k_written_at();
 
     // Snapshot this node's range once (avoid repeated lock acquisitions).
     let (pfx_start, pfx_end) = {
@@ -974,10 +987,6 @@ async fn route_ingest_batch(
     for mut entry in entries.into_iter() {
         let new_token = cell_token(entry.lat, entry.lon, s.cfg.s2_level);
 
-        // ── Range ownership guard ──────────────────────────────────────────
-        // Once the source shard has transferred a range and updated its prefix,
-        // it refuses writes that belong to a different shard.  Return 409 so
-        // clients can look up the correct node from the cluster ring.
         let in_range = (pfx_start.is_empty() || new_token.as_str() >= pfx_start.as_str())
                     && (pfx_end.is_empty()   || new_token.as_str() <  pfx_end.as_str());
         if !in_range {
@@ -985,36 +994,31 @@ async fn route_ingest_batch(
                 "Rejecting entity {} (token {}) — not in my range [{}, {})",
                 entry.id, new_token, pfx_start, pfx_end
             );
-            return StatusCode::CONFLICT;   // 409: caller should re-route
+            return StatusCode::CONFLICT;
         }
 
-        // ── Stamp written_at ───────────────────────────────────────────────
         if entry.written_at == 0 { entry.written_at = now_ms; }
 
-        let ak      = format!("{prefix}:entity:{}", entry.id);
-        let new_ck  = format!("{prefix}:cell:{new_token}");
-        let loc_key = format!("{prefix}:location:{}", entry.id);
+        let ak      = s.store.k_entity(&entry.id);
+        let new_ck  = s.store.k_cell(&new_token);
+        let loc_key = s.store.k_location(&entry.id);
         let json    = serde_json::to_string(&entry).unwrap_or_default();
 
-        // ── Reverse-lookup cleanup ─────────────────────────────────────────
         if let Ok(Some(old_token)) = conn.get::<_, Option<String>>(&loc_key).await {
             if old_token != new_token {
-                let old_ck = format!("{prefix}:cell:{old_token}");
+                let old_ck = s.store.k_cell(&old_token);
                 let _: () = conn.srem(&old_ck, &entry.id).await.unwrap_or(());
                 let remaining: u64 = conn.scard(&old_ck).await.unwrap_or(1);
-                if remaining == 0 {
-                    let _: () = conn.del(&old_ck).await.unwrap_or(());
-                }
+                if remaining == 0 { let _: () = conn.del(&old_ck).await.unwrap_or(()); }
                 tracing::debug!("Entity {} moved: cell {old_token} → {new_token}", entry.id);
             }
         }
 
-        // ── Write entity + written_at index atomically ─────────────────────
         let mut pipe = redis::pipe();
-        pipe.set_ex(&ak,             &json,              ttl).ignore()
-            .sadd(&new_ck,           &entry.id).ignore()
-            .set_ex(&loc_key,        &new_token,         ttl).ignore()
-            .zadd(&written_at_key,   entry.id.as_str(), entry.written_at as f64).ignore();
+        pipe.set_ex(&ak,           &json,     ttl).ignore()
+            .sadd(&new_ck,         &entry.id).ignore()
+            .set_ex(&loc_key,      &new_token, ttl).ignore()
+            .zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64).ignore();
         let _: () = pipe.query_async(&mut conn).await.unwrap_or(());
     }
 
@@ -1034,7 +1038,7 @@ async fn route_ingest_cell(
     Json(req): Json<IngestCellRequest>,
 ) -> StatusCode {
     if let Ok(mut conn) = s.redis.get_multiplexed_async_connection().await {
-        let key = format!("{}:cell:{}", s.store.key_prefix(), req.token);
+        let key = s.store.k_cell(&req.token);
         for id in &req.ids {
             let _: () = conn.sadd(&key, id).await.unwrap_or(());
         }
@@ -1162,7 +1166,7 @@ async fn route_assign_range(
         if let Ok(mut conn) = s.redis.get_multiplexed_async_connection().await {
             let old_start = s.my_info.read().await.prefix_start.clone();
             if !old_start.is_empty() {
-                let lock_key = format!("{}:range_claim:{old_start}", s.store.key_prefix());
+                let lock_key = s.store.k_range_claim(&old_start);
                 let _: () = conn.del(&lock_key).await.unwrap_or(());
             }
         }
@@ -1182,7 +1186,7 @@ async fn route_assign_range(
     // with the correct target.  The lock TTL (120 s) ensures it auto-releases
     // if this node crashes before transitioning to Active.
     {
-        let lock_key = format!("{}:range_claim:{}", s.store.key_prefix(), req.prefix_start);
+        let lock_key = s.store.k_range_claim(&req.prefix_start);
         let node_id  = s.cfg.node_id.clone();
         match s.redis.get_multiplexed_async_connection().await {
             Ok(mut conn) => {
@@ -1286,7 +1290,7 @@ async fn bootstrap_delta_sync(
     // was to prevent a second node from stealing the same range during bootstrap.
     // (The 120 s TTL is just the safety-net if we crash before reaching here.)
     if let Ok(mut conn) = s.redis.get_multiplexed_async_connection().await {
-        let lock_key = format!("{}:range_claim:{prefix_start}", s.store.key_prefix());
+        let lock_key = s.store.k_range_claim(&prefix_start);
         let _: () = conn.del(&lock_key).await.unwrap_or(());
     }
 }
@@ -1322,11 +1326,11 @@ async fn route_delete_entity(
         return StatusCode::SERVICE_UNAVAILABLE;
     };
 
-    let entity_key = format!("{}:entity:{id}", s.store.key_prefix());
-    let loc_key    = format!("{}:location:{id}", s.store.key_prefix());
+    let entity_key = s.store.k_entity(id.as_str());
+    let loc_key    = s.store.k_location(id.as_str());
 
     if let Some(token) = p.token {
-        let cell_key = format!("{}:cell:{token}", s.store.key_prefix());
+        let cell_key = s.store.k_cell(&token);
         let _: () = conn.del(&entity_key).await.unwrap_or(());
         let _: () = conn.del(&loc_key).await.unwrap_or(());
         let _: () = conn.srem(&cell_key, &id).await.unwrap_or(());
@@ -1337,7 +1341,7 @@ async fn route_delete_entity(
         let mut cursor = 0u64;
         loop {
             let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-                .arg(cursor).arg("MATCH").arg(format!("{}:cell:*", s.store.key_prefix())).arg("COUNT").arg(200)
+                .arg(cursor).arg("MATCH").arg(s.store.k_cell_pattern()).arg("COUNT").arg(200)
                 .query_async(&mut conn).await.unwrap_or((0, vec![]));
             for key in keys {
                 let _: () = conn.srem(&key, &id).await.unwrap_or(());

@@ -95,14 +95,14 @@ impl GeoRedisGrpc for GeoRedisService {
         let mut conn = self.state.redis.get_multiplexed_async_connection().await
             .map_err(|e| Status::internal(e.to_string()))?;
         let new_tok = cell_token(e.lat, e.lon, s2l);
-        let kp  = self.state.store.key_prefix();
-        let ak  = format!("{kp}:entity:{}", e.id);
-        let ck  = format!("{kp}:cell:{new_tok}");
-        let loc = format!("{kp}:location:{}", e.id);
+        let st  = &self.state.store;
+        let ak  = st.k_entity(&e.id);
+        let ck  = st.k_cell(&new_tok);
+        let loc = st.k_location(&e.id);
         let js  = serde_json::to_string(&geo).unwrap_or_default();
         if let Ok(Some(old)) = conn.get::<_, Option<String>>(&loc).await {
             if old != new_tok {
-                let _: () = conn.srem(format!("{}:cell:{old}", self.state.store.key_prefix()), &e.id).await.unwrap_or(());
+                let _: () = conn.srem(st.k_cell(&old), &e.id).await.unwrap_or(());
             }
         }
         let mut pipe = redis::pipe();
@@ -123,11 +123,11 @@ impl GeoRedisGrpc for GeoRedisService {
         let tokens = viewport_tokens(r.south, r.west, r.north, r.east, self.state.cfg.s2_level);
         let mut conn = self.state.redis.get_multiplexed_async_connection().await
             .map_err(|e| Status::internal(e.to_string()))?;
-        let kp       = self.state.store.key_prefix();
-        let cell_keys: Vec<String> = tokens.iter().map(|t| format!("{kp}:cell:{t}")).collect();
+        let st       = &self.state.store;
+        let cell_keys: Vec<String> = tokens.iter().map(|t| st.k_cell(t)).collect();
         let ids: Vec<String> = conn.sunion(cell_keys).await.unwrap_or_default();
         let mut pipe = redis::pipe();
-        for id in &ids { pipe.get(format!("{}:entity:{id}", self.state.store.key_prefix())); }
+        for id in &ids { pipe.get(st.k_entity(id)); }
         let jsons: Vec<Option<String>> = pipe.query_async(&mut conn).await.unwrap_or_default();
         let entries: Vec<GrpcGeoEntry> = jsons.into_iter().flatten()
             .filter_map(|j| serde_json::from_str::<GeoEntry>(&j).ok())
