@@ -3,6 +3,8 @@
 **Status:** Draft v0.1 — benchmarks measured 2026-07-10 on a local Redis instance  
 **Scope:** Core library (`proxima`), distributed geo-node daemon, split/merge protocol
 
+> **Product framing:** Proxima is a distributed geospatial cache for sub-millisecond reads and multi-million entity storage, backed by any managed Redis instance. Each shard is a stateless Rust service with its own dedicated Redis — a $50/month managed Redis per region supports ~6 million entities. Shards split without downtime as load grows.
+
 ---
 
 ## 1. Problem Statement
@@ -16,7 +18,13 @@ Redis Cluster's own geo commands (`GEOADD`/`GEORADIUS`) are single-node only for
 
 Tile38 solves the single-node problem with Raft replication but has no horizontal split protocol — a single node must hold all data for a geographic region.
 
-**Proxima's thesis:** S2 cell token strings form a total order that respects geographic locality. Using the token string as both the Redis key suffix and the shard routing key allows shard boundaries to be pure lexicographic prefix comparisons. Splits require no data reshuffle — only a bounded catch-up window.
+**Proxima's thesis:** S2 cell token strings form a total order that respects geographic locality. Using the token string as both the Redis key suffix and the shard routing key allows shard boundaries to be pure lexicographic prefix comparisons. Splits require no data reshuffle — only a bounded catch-up window, and each shard's Redis instance is completely independent.
+
+### One Redis per shard — not shared
+
+This is the fundamental topology decision. Shards do **not** share a Redis instance. When a split happens, entities are HTTP-transferred from the source's Redis to the target's Redis via `/ingest-snapshot`, then deleted from the source. There is no cross-shard Redis operation during steady-state reads or writes.
+
+In Docker (`demo/cluster-compose.yml`), each geo-node container has a dedicated `redis:7-alpine` sidecar. In Kubernetes (`demo/k8s/`), Redis runs as a sidecar in each shard pod on the loopback interface (<0.1 ms). In production, replace the sidecar `REDIS_URL` with a managed instance (Azure Cache for Redis, AWS ElastiCache, Redis Cloud) in the same region as the geo-node.
 
 ---
 

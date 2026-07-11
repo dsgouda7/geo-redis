@@ -1,37 +1,52 @@
-# georedis
+# proxima
 
-**Distributed geospatial trie for real-time dynamic objects, backed by Redis.**
+**A distributed geospatial cache that answers "what's near me?" in under 1 ms across millions of moving objects — aircraft, couriers, IoT devices — backed by any managed Redis instance.**
 
-Answers the question *"what is near me right now?"* in 2–10 ms across millions of moving entities — aircraft, couriers, IoT devices, vehicles — without the write-amplification penalty of traditional spatial databases.
+Shards split automatically as load grows. No data migration overhead. No downtime. Each shard is a stateless Rust service pointed at its own Redis — run it as a Docker sidecar, a K8s pod, or against Azure Cache / ElastiCache in any region.
 
-[![CI](https://github.com/YOUR_USERNAME/georedis/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/georedis/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/georedis.svg)](https://crates.io/crates/georedis)
+[![CI](https://github.com/dsgouda7/proxima/actions/workflows/ci.yml/badge.svg)](https://github.com/dsgouda7/proxima/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/proxima.svg)](https://crates.io/crates/proxima)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
 
-## What it does
+## By the numbers
+
+> All figures measured on a local Docker Redis — see [TECHNICAL.md](TECHNICAL.md) §8 for full methodology. Run yourself: `scripts/run-experiments.ps1`
+
+| What | Measured | Notes |
+|---|---|---|
+| Read latency ("what's near me?") | **683 µs p50 / 933 µs p99** | 5,000 seeded entities, local Redis |
+| Viewport size scaling | **+14 µs** from 1 to 32 S2 cells | S2 trie touches only relevant cells |
+| Write latency (batch) | **2.95 ms p50 per 100-entity batch** | ~30 µs/entity when pipelined |
+| Storage per entity | **~976 B · 3 Redis keys** | ~80 B JSON payload |
+| Entities per GB of Redis | **~1 million** | Linear with payload size |
+| Shard split catch-up miss | **0.5%** (192/193 writes) | `entities_written_after` completeness |
+| ZSET housekeeping accuracy | **100%** stale entries pruned | `prune_written_at()` |
+
+---
 
 ```mermaid
 sequenceDiagram
     participant App as Your App / Courier GPS
     participant Node as geo-node (Rust)
-    participant Redis as Redis (S2 index)
-    participant SQLite as SQLite (metadata)
+    participant Redis as Redis (own instance per shard)
+    participant SQLite as SQLite (crash-recovery snapshot)
 
     App->>Node: POST /ingest [{id, lat, lon, payload}]
     Node->>Node: compute S2 token in 68 ns
-    Node->>Redis: SET aircraft:{id} EX 120 + SADD cell:{token}
-    Node->>SQLite: UPSERT metadata + append position history
+    Node->>Redis: SET proxima:entity:{id} EX 120
+    Node->>Redis: SADD proxima:cell:{token} {id}
+    Node->>Redis: ZADD proxima:written_at {now_ms} {id}
     Node-->>App: 200 OK
 
     App->>Node: GET /api/region?viewport
     Node->>Node: viewport → S2 cap covering → token list
-    Node->>Redis: SUNION cell:{t1} cell:{t2} ... → IDs
+    Node->>Redis: SUNION proxima:cell:{t1} {t2} ... → IDs
     Redis-->>Node: 47 entity IDs
     Node->>Redis: Pipeline GET × 47
     Redis-->>Node: 47 JSON payloads
-    Node-->>App: [{id, lat, lon, payload}] in 2–10 ms
+    Node-->>App: [{id, lat, lon, payload}] in <1 ms
 ```
 
 ---
@@ -64,15 +79,33 @@ A viewport query covering London computes the S2 tokens for that area (`487a`, `
 
 ### Redis data model
 
+All keys live under a configurable namespace (default `proxima`). Each **shard has its own Redis instance** — keys never cross shard boundaries:
+
 ```
-georedis:entity:{id}     →  SET  {json}   EX ttl    ← full entity payload (includes written_at)
-georedis:cell:{token}    →  SADD {id...}  EXPIRE ttl ← spatial index
-georedis:location:{id}   →  SET  {token}  EX ttl    ← reverse lookup: id → cell token
-georedis:written_at      →  ZSET score=ms member=id  ← write-timestamp index for delta sync
+proxima:entity:{id}     →  SET  {json}   EX ttl    ← full entity payload
+proxima:cell:{token}    →  SADD {id...}  EXPIRE ttl ← spatial index
+proxima:location:{id}   →  SET  {token}  EX ttl    ← reverse lookup: id → cell token
+proxima:written_at      →  ZSET score=ms member=id  ← write-timestamp index for delta sync
 ```
 
-The `written_at` sorted set enables the shard split protocol (see below): a new shard
-can request all entities written after a given millisecond timestamp in O(log N + result size).
+The `written_at` sorted set is the only key without a TTL — it powers `/delta-sync` during shard splits and is pruned periodically by `prune_written_at()`.
+
+### One Redis per shard — always
+
+```
+Shard 0 (Americas)          Shard 1 (Europe)            Shard 2 (Pacific)
+┌───────────────┐           ┌───────────────┐           ┌───────────────┐
+│  geo-node-0   │  ←gossip→ │  geo-node-1   │  ←gossip→ │  geo-node-2   │
+│  prefix [∅,5) │           │  prefix [5,a) │           │  prefix [a,∅) │
+│  ┌─────────┐  │           │  ┌─────────┐  │           │  ┌─────────┐  │
+│  │ redis-0 │  │           │  │ redis-1 │  │           │  │ redis-2 │  │
+│  └─────────┘  │           │  └─────────┘  │           │  └─────────┘  │
+└───────────────┘           └───────────────┘           └───────────────┘
+```
+
+- **Docker** (`demo/cluster-compose.yml`): each geo-node has a dedicated `redis:7-alpine` sidecar container
+- **Kubernetes** (`demo/k8s/`): Redis runs as a sidecar in each shard pod — loopback latency <0.1 ms
+- **Production**: set `REDIS_URL=rediss://...` per shard to a managed instance (Azure Cache for Redis, AWS ElastiCache, Redis Cloud) in the same datacenter region as the geo-node
 
 ### Data flow
 
@@ -82,11 +115,11 @@ flowchart LR
         OS["OpenSky Network\n(aircraft)"]
         Delivery["Your App\n(couriers / IoT)"]
     end
-    subgraph georedis
+    subgraph proxima
         Poller["Poller\nevery 30s"]
         Trie["In-Memory S2 Trie\n68 ns/query"]
-        Store["RedisStore\n2–10 ms reads"]
-        DB["SQLite\nmetadata + trail"]
+        Store["RedisStore\n<1 ms reads"]
+        DB["SQLite\ncrash-recovery snapshot"]
     end
     subgraph Clients
         UI["React + Leaflet\nweb app"]
@@ -97,7 +130,7 @@ flowchart LR
     OS --> Poller
     Delivery --> Poller
     Poller --> Trie & Store & DB
-    Store <--> Redis[("Redis\nS2 index")]
+    Store <--> Redis[("Redis\n(own instance per shard)")]
     UI & gRPC & REST --> Store
 ```
 
@@ -314,55 +347,50 @@ Each pod runs **Redis as a sidecar container** — loopback latency (<0.1ms) vs 
 
 ## Benchmarks
 
-| Operation | Latency | Notes |
-|---|---|---|
-| Trie insert | **1.04 µs** | In-process, no I/O |
-| Trie exact-cell lookup | **68 ns** | O(token_len) ≈ 5 levels |
-| Redis write (11k aircraft, real server) | **~170 ms** | Single writer, production |
-| Redis read (viewport query, real server) | **2–10 ms** | Low concurrency |
-| Redis write (load test, 5k batch) | p50 **900ms** | 4 concurrent writers stress |
-| Redis read (load test) | p50 **185ms** | 16 concurrent readers stress |
+> Controlled experiments run against a local Docker Redis. Full methodology in [TECHNICAL.md](TECHNICAL.md) §8.
+
+| Operation | p50 | p99 | Notes |
+|---|---|---|---|
+| Read — 1 S2 token viewport | **683 µs** | 933 µs | 5k seeded entities |
+| Read — 8 S2 token viewport | **685 µs** | 986 µs | city-scale |
+| Read — 32 S2 token viewport | **697 µs** | 960 µs | country-scale |
+| Write — `persist_trie` (100 entities) | **2.95 ms** | 11.63 ms | ~30 µs/entity batched |
+| Trie insert (in-process) | **1.04 µs** | — | no I/O |
+| Trie lookup (in-process) | **68 ns** | — | O(token_len) |
 
 ```bash
-# Run trie benchmarks
-cargo bench -p georedis
-
-# Single-node load test
-cargo run --release -p georedis-loadtest -- --writers 4 --readers 16 --duration-secs 60
-
-# Distributed load test (after docker compose -f demo/cluster-compose.yml up -d)
-cargo run --release -p georedis-loadtest -- \
-  --shards ':5:redis://localhost:6379,5:a:redis://localhost:6380,a::redis://localhost:6381' \
-  --writers 4 --readers 8 --duration-secs 60
+# Reproduce all 5 experiments
+.\scripts\run-experiments.ps1
+cargo run --release -p proxima-loadtest -- --writers 4 --readers 16 --duration-secs 60
 ```
 
 ---
 
-## Why georedis vs alternatives
+## Why proxima vs alternatives
 
 ### tl;dr
 
-Every other option in this space makes a **write-frequency tradeoff** that breaks down for real-time dynamic objects:
+Every other option in this space makes a write-frequency tradeoff that breaks down for real-time dynamic objects:
 
 ```
-Traditional spatial DB:  optimised for complex spatial queries on stable data
-georedis:               optimised for 10k+ entities updating every 30 seconds
+Traditional spatial DB:  optimised for complex queries on stable data
+proxima:                 <1 ms reads/writes, millions of moving entities,
+                         backed by any managed Redis, shards without downtime
 ```
 
 ### Detailed comparison
 
-| | **georedis** | Redis GEO | PostGIS | Elasticsearch | Tile38 |
+| | **proxima** | Redis GEO | PostGIS | Elasticsearch | Tile38 |
 |---|---|---|---|---|---|
-| **Spatial index** | S2 sphere | Geohash | R-tree | BKD tree | Geohash+R-tree |
-| **Write latency** | <1ms | <1ms | 5–50ms | 200–800ms | <1ms |
-| **Read latency** | 2–10ms | 10–50ms | 5–30ms | 10–50ms | 5–20ms |
-| **Geo edge distortion** | None (S2) | High | None | None | Medium |
-| **Hierarchical queries** | ✓ (trie) | ✗ | ✓ (slow) | ✓ (slow) | ✗ |
-| **Distributed geo sharding** | ✓ geographic | Hash slot | Manual | Auto (non-geo) | Manual |
-| **11k entities @ 30s update** | ~170ms/cycle | ~250ms | 5–30s | not feasible | ~200ms |
+| **Read latency** | **<1 ms** (measured) | 10–50 ms | 5–30 ms | 10–50 ms | 5–20 ms |
+| **Write latency/entity** | **~30 µs** batched | <1 ms | 5–50 ms | 200–800 ms | <1 ms |
+| **Storage/entity** | **~1 KB** | ~60 B | ~200 B | ~500 B | ~200 B |
+| **Entities per GB** | **~1 M** | ~16 M | ~5 M | ~2 M | ~5 M |
+| **Geo sharding** | Geographic locality | Hash slot | Manual | Auto (non-geo) | None |
+| **Split protocol** | Snapshot + bounded delta-sync | MIGRATE (blocking) | N/A | N/A | N/A |
+| **Managed Redis** | ✓ any REDIS_URL | ✓ single-node only | N/A | N/A | N/A |
+| **Hierarchical queries** | ✓ (S2 trie) | ✗ | ✓ (slow) | ✓ (slow) | ✗ |
 | **Position history** | SQLite | ✗ | ✓ | ✓ | ✗ |
-| **Language** | Rust | C | C/C++ | Java | Go |
-| **Memory / entity** | ~400B | ~60B | ~200B | ~500B | ~200B |
 
 #### vs Redis GEO (GEOADD / GEOSEARCH)
 
@@ -384,10 +412,10 @@ Elasticsearch's refresh interval means **there is a 200–1000ms lag** between w
 
 Tile38 is the closest competitor — a purpose-built real-time geo database. Key differences:
 
-- Tile38 uses a flat R-tree index; georedis uses a **trie over S2 tokens**. The trie enables O(token_len) prefix queries that Tile38 can't do efficiently.
-- Tile38 has no distributed sharding story beyond a master-replica setup.
-- Tile38 is written in Go; georedis is Rust — **no GC pauses** during heavy write cycles.
-- Tile38 has no position history / trail tracking.
+- Tile38 uses a flat R-tree; proxima uses a **trie over S2 tokens**, enabling O(token_len) prefix queries that Tile38 can't do efficiently.
+- Tile38 has no distributed sharding. One server must hold all data for a geographic region with no zero-downtime scale-out path.
+- Tile38 is written in Go; proxima is Rust — no GC pauses during heavy write cycles.
+- Tile38 has no position history.
 
 ---
 
@@ -442,12 +470,12 @@ Tile38 is the closest competitor — a purpose-built real-time geo database. Key
 ## Repository layout
 
 ```
-georedis/
+proxima/
 ├── lib/                   # Core Rust library (publish to crates.io)
 │   ├── src/
 │   │   ├── trie.rs        # S2-keyed trie — O(token_len) insert + lookup + range-remove
-│   │   ├── store.rs       # Redis persistence — persist_trie, merge_entries, entities_written_after
-│   │   ├── metrics.rs     # Lock-free atomic latency counters
+│   │   ├── store.rs       # Redis persistence + GeoStore trait
+│   │   ├── metrics.rs     # HDR histogram latency tracking (p50/p95/p99/p99.9)
 │   │   └── cluster.rs     # ClusterRing, NodeInfo, NodeStatus (incl. Bootstrapping)
 │   ├── tests/             # 22 integration tests
 │   └── benches/           # criterion benchmarks
