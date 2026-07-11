@@ -6,6 +6,7 @@ members  = [
     "demo/loadtest",
     "demo/geo-node",
     "demo/cluster-test",
+    "demo/experiments",
 ]
 resolver = "2"
 

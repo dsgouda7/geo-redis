@@ -1927,6 +1927,7 @@ name = "proxima"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "hdrhistogram",
  "redis",
  "s2",
  "serde",
@@ -1967,6 +1968,23 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "proxima-experiments"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hdrhistogram",
+ "proxima",
+ "rand 0.8.6",
+ "redis",
+ "s2",
+ "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

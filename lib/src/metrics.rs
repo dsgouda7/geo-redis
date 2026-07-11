@@ -1,17 +1,42 @@
-use std::sync::{
-    atomic::{AtomicU64, Ordering::Relaxed},
-    Arc,
-};
+use std::sync::{Arc, Mutex};
+use hdrhistogram::Histogram;
 use serde::Serialize;
 
-#[derive(Debug, Default)]
+/// Per-instance latency tracker backed by HDR histograms.
+///
+/// Records every `persist_trie` and `query_region` call duration so callers
+/// can observe full latency distributions (p50/p95/p99/p99.9) rather than
+/// the lossy avg/max summary.
+///
+/// Thread-safe — all methods take `&self` and use internal locking that does
+/// not span async await points.
 pub struct Metrics {
-    write_count:    AtomicU64,
-    write_total_us: AtomicU64,
-    write_max_us:   AtomicU64,
-    read_count:     AtomicU64,
-    read_total_us:  AtomicU64,
-    read_max_us:    AtomicU64,
+    /// Histogram for `persist_trie` call durations (microseconds).
+    write_hist: Mutex<Histogram<u64>>,
+    /// Histogram for `query_region` call durations (microseconds).
+    read_hist:  Mutex<Histogram<u64>>,
+}
+
+impl std::fmt::Debug for Metrics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Metrics").finish_non_exhaustive()
+    }
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            // 1 µs low bound, 60 s high bound, 3 significant figures
+            write_hist: Mutex::new(
+                Histogram::<u64>::new_with_bounds(1, 60_000_000, 3)
+                    .expect("HDR histogram init"),
+            ),
+            read_hist: Mutex::new(
+                Histogram::<u64>::new_with_bounds(1, 60_000_000, 3)
+                    .expect("HDR histogram init"),
+            ),
+        }
+    }
 }
 
 impl Metrics {
@@ -19,38 +44,72 @@ impl Metrics {
         Arc::new(Self::default())
     }
 
+    /// Record a single write (persist_trie) duration in microseconds.
+    #[inline]
     pub fn record_write(&self, us: u64) {
-        self.write_count.fetch_add(1, Relaxed);
-        self.write_total_us.fetch_add(us, Relaxed);
-        self.write_max_us.fetch_max(us, Relaxed);
+        if let Ok(mut h) = self.write_hist.lock() {
+            h.record(us.max(1)).ok();
+        }
     }
 
+    /// Record a single read (query_region) duration in microseconds.
+    #[inline]
     pub fn record_read(&self, us: u64) {
-        self.read_count.fetch_add(1, Relaxed);
-        self.read_total_us.fetch_add(us, Relaxed);
-        self.read_max_us.fetch_max(us, Relaxed);
+        if let Ok(mut h) = self.read_hist.lock() {
+            h.record(us.max(1)).ok();
+        }
     }
 
+    /// Returns a point-in-time snapshot of all latency percentiles.
     pub fn snapshot(&self) -> MetricsSnapshot {
-        let wc = self.write_count.load(Relaxed);
-        let rc = self.read_count.load(Relaxed);
+        let wh = self.write_hist.lock().unwrap();
+        let rh = self.read_hist.lock().unwrap();
         MetricsSnapshot {
-            write_count:  wc,
-            write_avg_us: if wc > 0 { self.write_total_us.load(Relaxed) / wc } else { 0 },
-            write_max_us: self.write_max_us.load(Relaxed),
-            read_count:   rc,
-            read_avg_us:  if rc > 0 { self.read_total_us.load(Relaxed) / rc } else { 0 },
-            read_max_us:  self.read_max_us.load(Relaxed),
+            write_count:   wh.len(),
+            write_p50_us:  wh.value_at_quantile(0.50),
+            write_p95_us:  wh.value_at_quantile(0.95),
+            write_p99_us:  wh.value_at_quantile(0.99),
+            write_p999_us: wh.value_at_quantile(0.999),
+            write_max_us:  wh.max(),
+            read_count:    rh.len(),
+            read_p50_us:   rh.value_at_quantile(0.50),
+            read_p95_us:   rh.value_at_quantile(0.95),
+            read_p99_us:   rh.value_at_quantile(0.99),
+            read_p999_us:  rh.value_at_quantile(0.999),
+            read_max_us:   rh.max(),
         }
     }
 }
 
+/// Snapshot of latency distributions at a point in time.
+///
+/// All latency values are in **microseconds**.  Use `to_ms()` helpers for
+/// human-readable output.
 #[derive(Debug, Serialize, Clone)]
 pub struct MetricsSnapshot {
-    pub write_count:  u64,
-    pub write_avg_us: u64,
-    pub write_max_us: u64,
-    pub read_count:   u64,
-    pub read_avg_us:  u64,
-    pub read_max_us:  u64,
+    // ── Write (persist_trie) ─────────────────────────────────────────────
+    pub write_count:   u64,
+    pub write_p50_us:  u64,
+    pub write_p95_us:  u64,
+    pub write_p99_us:  u64,
+    pub write_p999_us: u64,
+    pub write_max_us:  u64,
+    // ── Read (query_region) ──────────────────────────────────────────────
+    pub read_count:    u64,
+    pub read_p50_us:   u64,
+    pub read_p95_us:   u64,
+    pub read_p99_us:   u64,
+    pub read_p999_us:  u64,
+    pub read_max_us:   u64,
+}
+
+impl MetricsSnapshot {
+    /// Format a microsecond value as a human-readable string (µs or ms).
+    pub fn fmt_us(us: u64) -> String {
+        if us >= 1_000 {
+            format!("{:.2}ms", us as f64 / 1_000.0)
+        } else {
+            format!("{us}µs")
+        }
+    }
 }

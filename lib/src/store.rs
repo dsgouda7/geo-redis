@@ -160,8 +160,7 @@ impl RedisStore {
                 pipe.set_ex(&loc_key, &token, ttl).ignore();
                 // Written-at sorted set: score = ms timestamp, member = entity id.
                 // Enables efficient delta-sync queries: ZRANGEBYSCORE since_ms +inf
-                pipe.zadd(&written_at_key, entry.written_at as f64, entry.id.as_str()).ignore();
-                new_cells.insert(token);
+                pipe.zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64).ignore();
             }
             pipe.query_async::<()>(&mut conn).await?;
         }
@@ -364,7 +363,7 @@ impl RedisStore {
                 pipe.set_ex(&ak,            &json,              ttl).ignore();
                 pipe.sadd(&ck,              &entry.id).ignore();
                 pipe.set_ex(&loc,           token,              ttl).ignore();
-                pipe.zadd(&written_at_key,  entry.written_at as f64, entry.id.as_str()).ignore();
+                pipe.zadd(&written_at_key,  entry.id.as_str(), entry.written_at as f64).ignore();
             }
             pipe.query_async::<()>(&mut conn).await?;
         }

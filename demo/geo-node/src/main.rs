@@ -1008,7 +1008,7 @@ async fn route_ingest_batch(
         pipe.set_ex(&ak,             &json,              ttl).ignore()
             .sadd(&new_ck,           &entry.id).ignore()
             .set_ex(&loc_key,        &new_token,         ttl).ignore()
-            .zadd(&written_at_key,   entry.written_at as f64, entry.id.as_str()).ignore();
+            .zadd(&written_at_key,   entry.id.as_str(), entry.written_at as f64).ignore();
         let _: () = pipe.query_async(&mut conn).await.unwrap_or(());
     }
 

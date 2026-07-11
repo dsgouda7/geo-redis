@@ -9,13 +9,14 @@ keywords    = ["geo", "s2", "redis", "distributed", "spatial"]
 categories  = ["data-structures", "database"]
 
 [dependencies]
-s2         = "0.0.10"
-redis      = { workspace = true }
-tokio      = { workspace = true }
-serde      = { workspace = true }
-serde_json = { workspace = true }
-thiserror  = "1"
-tracing    = { workspace = true }
+s2            = "0.0.10"
+hdrhistogram  = "7"
+redis         = { workspace = true }
+tokio         = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+thiserror     = "1"
+tracing       = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
