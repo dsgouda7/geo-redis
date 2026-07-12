@@ -53,3 +53,13 @@ jobs:
           tags: proxima-geo-node:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  cluster-integration:
+    name: Cluster — Redis split lifecycle
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run -p proxima-cluster-test

@@ -2,9 +2,9 @@
 
 **A distributed geospatial cache that answers "what's near me?" in under 1 ms across millions of moving objects — aircraft, couriers, IoT devices — backed by any managed Redis instance.**
 
-Shards split automatically as load grows. No data migration overhead. No downtime. Each shard is a stateless Rust service pointed at its own Redis — run it as a Docker sidecar, a K8s pod, or against Azure Cache / ElastiCache in any region.
+Shards can be split online as load grows through an authenticated operator API. Each shard is a stateless Rust service pointed at its own Redis — run it as a Docker sidecar, a K8s pod, or against Azure Cache / ElastiCache in any region. Distributed split and merge additionally require a managed, quorum-backed etcd v3 cluster configured with `METADATA_ETCD_ENDPOINTS`.
 
-> **Maturity:** The core library and single-node demo are production-ready. The distributed split/merge protocol is functional but **experimental** — it uses a Redis CAS lock for range assignment rather than a consensus protocol, which is not partition-safe. See [TECHNICAL.md §5.3](TECHNICAL.md) for the documented gap before running split/merge in production.
+> **Maturity:** The core library and single-node demo are production-ready. Distributed range changes fail closed unless an etcd v3 metadata authority is configured. etcd transactionally records each range owner through its Raft quorum; Redis is not used for topology authority.
 
 [![CI](https://github.com/dsgouda7/proxima/actions/workflows/ci.yml/badge.svg)](https://github.com/dsgouda7/proxima/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/proxima.svg)](https://crates.io/crates/proxima)
@@ -187,9 +187,9 @@ All values are environment variables (copy `config/.env.example` to `.env`):
 | `SQLITE_PATH` | `proxima.db` | Path for metadata / position-history store |
 | `S2_LEVEL` | `9` | Cell granularity — 9≈70km, 12≈2km |
 | `POLL_INTERVAL_SECS` | `30` | OpenSky poll cadence |
-| `SPLIT_THRESHOLD_KEYS` | `500000` | Auto-split shard when key count exceeds this |
-| `SPLIT_THRESHOLD_WRITE_QPS` | `50000` | Auto-split shard when write QPS exceeds this |
-| `MERGE_THRESHOLD_KEYS` | `25000` | Auto-merge adjacent shards when both fall below |
+| `SPLIT_THRESHOLD_KEYS` | `500000` | Recommended operator split threshold; automation is not yet implemented |
+| `SPLIT_THRESHOLD_WRITE_QPS` | `50000` | Recommended operator split threshold; automation is not yet implemented |
+| `MERGE_THRESHOLD_KEYS` | `25000` | Recommended operator merge threshold; automation is not yet implemented |
 | `SUSPECT_SECS` | `10` | Gossip: mark node Suspect after N silent seconds |
 | `DEAD_SECS` | `30` | Gossip: mark node Dead after N silent seconds |
 | `GOSSIP_INTERVAL_SECS` | `2` | How often each node gossips with peers |
@@ -208,7 +208,7 @@ REDIS_URL=rediss://:<auth_token>@<cluster>.cache.amazonaws.com:6380
 
 ## gRPC interface
 
-The canonical cross-platform interface is defined in [`docs/proto/georedis.proto`](docs/proto/georedis.proto). Every `geo-node` exposes both HTTP/REST and gRPC on the same port.
+The canonical cross-platform interface is defined in [`docs/proto/georedis.proto`](docs/proto/georedis.proto). Every `geo-node` exposes HTTP/REST on `HTTP_PORT` and gRPC on `GRPC_PORT` (default: `HTTP_PORT + 10`).
 
 ```protobuf
 service GeoRedis {
@@ -259,12 +259,12 @@ graph LR
     Client -->|"token 'a3f..' → Shard 2"| N2
 ```
 
-### Auto-split / roll-up
+### Operator-triggered split / roll-up
 
-The split threshold and merge threshold are configurable per cluster (see `demo/k8s/configmap.yaml`). When a shard's key count exceeds `SPLIT_THRESHOLD_KEYS`, it:
+The split and merge thresholds are configurable per cluster (see `demo/k8s/configmap.yaml`) as operational alerting guidance. A controller does not yet trigger topology changes automatically. When an operator calls authenticated `POST /split` for an overloaded shard, the process:
 
 1. Scans its Redis for the median occupied S2 prefix (the geographic midpoint)
-2. Provisions a standby node
+2. Uses a pre-provisioned standby node
 3. Migrates keys ≥ split-point via HTTP batch transfer
 4. Updates its own prefix range
 5. Gossips the new topology to all peers
@@ -273,7 +273,7 @@ No central coordinator. No Zookeeper. Routing table convergence in O(log N) goss
 
 ### Shard split protocol
 
-When a shard's key count exceeds `SPLIT_THRESHOLD_KEYS`, it performs a **snapshot-first split** — a durable, crash-safe migration that does not require the source to stay live for the duration:
+When an operator calls `POST /split`, it performs a **snapshot-first split**. The source continues serving the old range until the target has completed bootstrap and acknowledged the new range:
 
 ```
 Source shard                           New shard (Standby → Bootstrapping → Active)

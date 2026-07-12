@@ -112,8 +112,10 @@ export default function TrieExplorer({ highlightId }: Props) {
         )}
       </div>
       {!path && (
-        <div style={{ color: '#f87171', padding: '0 12px 10px' }}>
-          {snapshot ? `No trie entry for "${highlightId}" in this app's data.` : 'Loading trie…'}
+        <div style={{ color: '#f87171', padding: '0 12px 10px', maxWidth: 300 }}>
+          {snapshot
+            ? `"${highlightId}" isn't in the current trie cycle — likely served from Redis's TTL cache (last seen recently, but omitted from the latest poll).`
+            : 'Loading trie…'}
         </div>
       )}
       {path && (

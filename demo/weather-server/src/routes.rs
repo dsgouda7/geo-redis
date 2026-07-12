@@ -238,29 +238,24 @@ pub async fn region_stations(
         });
     }
 
-    // Collect stations within the viewport bounds.
-    let in_view: Vec<crate::metar_bulk::BulkMETAR> = raw
-        .iter()
-        .filter(|s| s.lat >= p.s && s.lat <= p.n && s.lon >= p.w && s.lon <= p.e)
-        .cloned()
-        .collect();
-
-    let max = st.config.max_clusters;
-
-    let entries: Vec<GeoEntry> = if in_view.len() <= max {
-        // Fewer stations than the cap — show every individual station.
-        in_view
-            .iter()
+    let s2 = zoom_to_s2_level(p.zoom.unwrap_or(6));
+    let entries: Vec<GeoEntry> = if s2 == RAW_LEVEL {
+        // City-level view: expose the individual METAR stations in the
+        // viewport, regardless of how many are present.
+        raw.iter()
+            .filter(|s| s.lat >= p.s && s.lat <= p.n && s.lon >= p.w && s.lon <= p.e)
             .map(|s| station_to_aircraft(raw_to_geo_entry(s)))
             .collect()
     } else {
-        // More stations than the cap — auto-cluster to ≤ max nodes.
-        // aggregate() will pick the finest S2 level whose occupied-cell count
-        // is ≤ max, giving the maximum granularity that still keeps the UI
-        // readable regardless of the zoom level or viewport size.
-        let clusters = crate::aggregate::aggregate(&in_view, max, None);
-        clusters
-            .iter()
+        // Use the precomputed tier selected by Leaflet zoom. This guarantees
+        // a real S2 drill-down (L2 → L3 → L4 → L5) instead of holding a
+        // coarse cluster until the viewport happens to cross a count cap.
+        let cache = st.cached_clusters.read().await;
+        cache
+            .get(&s2)
+            .into_iter()
+            .flatten()
+            .filter(|c| c.lat >= p.s && c.lat <= p.n && c.lon >= p.w && c.lon <= p.e)
             .map(|c| station_to_aircraft(cluster_to_geo_entry(c)))
             .collect()
     };

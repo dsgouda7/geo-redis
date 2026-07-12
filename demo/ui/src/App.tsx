@@ -42,7 +42,8 @@ function fire(map: LeafletMap, cb: (s:number,w:number,n:number,e:number,z:number
 export default function App() {
   const [aircraft, setAircraft] = useState<Aircraft[]>([]);
   const [metrics,  setMetrics]  = useState<MetricsResponse | null>(null);
-  const [status,   setStatus]   = useState('Loading live aircraft...');
+  const [status,   setStatus]   = useState('Loading live data...');
+  const [isWeather, setIsWeather] = useState(false);
   const [streamProgress, setStreamProgress] = useState<{n:number,total:number}|null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -56,11 +57,19 @@ export default function App() {
       let res;
       if (zoom >= REGION_ZOOM) {
         res = await fetchRegion(cs, cw, cn, ce, zoom);
-        setStatus(`${res.count.toLocaleString()} aircraft · Redis S2 region · zoom ${zoom} · ${new Date().toLocaleTimeString()}`);
       } else {
         res = await fetchAllAircraft(zoom);
-        setStatus(`${res.count.toLocaleString()} aircraft worldwide · zoom in for region query`);
       }
+      // A deep-zoom viewport may contain no stations. Preserve the previously
+      // established mode in that case instead of relabelling a weather map as
+      // an aircraft tracker merely because the response is empty.
+      const responseIsWeather = res.aircraft.some(a => a.payload.__is_weather === true);
+      const weather = res.aircraft.length > 0 ? responseIsWeather : isWeather;
+      if (res.aircraft.length > 0) setIsWeather(responseIsWeather);
+      const subject = weather ? 'weather stations' : 'aircraft';
+      setStatus(zoom >= REGION_ZOOM
+        ? `${res.count.toLocaleString()} ${subject} · S2 region · zoom ${zoom} · ${new Date().toLocaleTimeString()}`
+        : `${res.count.toLocaleString()} ${subject} worldwide · zoom in for regional detail`);
 
       // On deep zoom with few aircraft: hydrate from SQLite for history + full metadata
       if (zoom >= DETAIL_ZOOM && res.aircraft.length > 0 && res.aircraft.length <= DETAIL_MAX) {
@@ -85,7 +94,7 @@ export default function App() {
           })
         );
         setAircraft(enriched);
-        setStatus(`${enriched.length} aircraft · full detail (SQLite) · zoom ${zoom}`);
+        setStatus(`${enriched.length} ${subject} · full detail (SQLite) · zoom ${zoom}`);
       } else {
         setAircraft(res.aircraft);
       }
@@ -140,10 +149,10 @@ export default function App() {
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#020617' }}>
       <header style={{ padding: '7px 16px', background: 'linear-gradient(90deg,#0c1528,#0f172a)', borderBottom: '1px solid rgba(56,189,248,0.15)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, boxShadow: '0 2px 12px rgba(0,0,0,0.5)' }}>
-        <span style={{ fontSize: 20 }}>✈</span>
+        <span style={{ fontSize: 20 }}>{isWeather ? '🌦️' : '✈'}</span>
         <strong style={{ fontSize: '1rem', color: '#38bdf8', letterSpacing: 0.5 }}>proxima</strong>
         <span style={{ color: '#475569', fontSize: 12 }}>·</span>
-        <span style={{ color: '#94a3b8', fontSize: 12 }}>Live Aircraft Tracker</span>
+        <span style={{ color: '#94a3b8', fontSize: 12 }}>{isWeather ? 'Live Weather Stations' : 'Live Aircraft Tracker'}</span>
         <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: '#64748b', maxWidth: 500, textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status}</span>
         {streamProgress && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -175,23 +184,26 @@ export default function App() {
             <AircraftMarker
               key={a.id} aircraft={a} onClick={handleSelect}
               onHover={handleHover} onHoverEnd={handleHoverEnd}
-              simplified={aircraft.length > 100}
+              simplified={!isWeather && aircraft.length > 100}
             />
           ))}
         </MapContainer>
-        <AircraftPanel aircraft={aircraft} onSelect={handleSelect} selected={selected} />
-        {metrics && <MetricsPanel metrics={metrics} />}
+        <AircraftPanel aircraft={aircraft} onSelect={handleSelect} selected={selected} isWeather={isWeather} />
+        {metrics && <MetricsPanel metrics={metrics} entityLabel={isWeather ? 'Stations' : 'Aircraft'} />}
         <div style={{ position: 'absolute', bottom: 24, left: 10, zIndex: 1000, display: 'flex', alignItems: 'flex-end', gap: 10 }}>
           <div style={{ background: 'rgba(15,23,42,0.9)', borderRadius: 8, padding: '8px 12px', fontSize: 10, color: '#94a3b8', border: '1px solid rgba(255,255,255,0.07)', backdropFilter: 'blur(4px)' }}>
-            <div style={{ fontWeight: 700, marginBottom: 5, color: '#e2e8f0', fontSize: 11 }}>Altitude</div>
-            {([['#a78bfa','>10 km'],['#38bdf8','7-10 km'],['#34d399','3-7 km'],['#fbbf24','0.5-3 km'],['#f87171','<500 m'],['#64748b','Ground']] as [string,string][]).map(([c,l]) => (
+            <div style={{ fontWeight: 700, marginBottom: 5, color: '#e2e8f0', fontSize: 11 }}>{isWeather ? 'Temperature' : 'Altitude'}</div>
+            {((isWeather
+              ? [['#ef4444','≥35°C'],['#f97316','25–35°C'],['#eab308','15–25°C'],['#22c55e','5–15°C'],['#06b6d4','−5–5°C'],['#3b82f6','<−5°C']]
+              : [['#a78bfa','>10 km'],['#38bdf8','7-10 km'],['#34d399','3-7 km'],['#fbbf24','0.5-3 km'],['#f87171','<500 m'],['#64748b','Ground']]
+            ) as [string,string][]).map(([c,l]) => (
               <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                 <div style={{ width: 10, height: 10, borderRadius: '50%', background: c, flexShrink: 0 }} />
                 <span>{l}</span>
               </div>
             ))}
             <div style={{ marginTop: 8, fontSize: 9, color: '#334155', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 6 }}>
-              Zoom 9+ · &lt;5 aircraft: full detail from SQLite
+              {isWeather ? 'Zoom 10+ · individual METAR stations' : 'Zoom 9+ · <5 aircraft: full detail from SQLite'}
             </div>
           </div>
           <TrieExplorer highlightId={hoveredId ?? selected} />

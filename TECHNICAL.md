@@ -140,9 +140,9 @@ The experiment writes entities at a controlled rate for a measured window Δt, t
 |---|---|---|---|---|---|
 | Local Redis, single node | 64 w/s | 3.01 s | 193 | 192 | **0.5%** |
 
-The 1 missed entry falls within Redis pipeline timing jitter (sub-millisecond). At higher write rates (thousands/sec over a real network), the miss rate approaches zero because `Δt` grows relative to pipeline latency.
+The 1 missed entry shows this experiment does **not** establish a zero-loss guarantee. It is likely attributable to the timestamp boundary and Redis pipeline timing, but that requires targeted failure-injection and concurrent-write testing before it can be treated as a correctness invariant. At higher write rates, a larger $\Delta t$ may reduce the relative impact of timing jitter; that remains a hypothesis to measure, not a guarantee.
 
-**Plain-English summary:** when you split a shard that's receiving live writes, the new shard catches up by asking "give me everything written since I started copying" — and it gets all of it. There is no window of data loss.
+**Plain-English summary:** during a split, the new shard asks for writes since the copy watermark and applies them in freshness order. The mechanism substantially narrows the catch-up window, but the distributed protocol remains experimental until zero-loss behavior is demonstrated under concurrent writes, retries, node crashes, and network partitions.
 
 ---
 

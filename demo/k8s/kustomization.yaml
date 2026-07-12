@@ -8,6 +8,7 @@ resources:
   - shard-1-europe.yaml
   - shard-2-asia.yaml
   - shard-3-standby.yaml
+  - storage.yaml
 # Secrets are NOT included here — apply separately per environment:
 #   kubectl apply -f demo/k8s/secrets.yaml   (your filled-in copy of secrets-template.yaml)
 # See secrets-template.yaml for per-provider instructions.

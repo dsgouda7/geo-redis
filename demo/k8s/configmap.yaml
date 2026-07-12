@@ -5,12 +5,17 @@ metadata:
   namespace: proxima
 data:
   S2_LEVEL: "12"
+  # A 3+ member external/managed etcd v3 quorum. Split and merge fail closed
+  # when it is unavailable; Redis is data storage, never topology authority.
+  METADATA_ETCD_ENDPOINTS: "http://etcd-client.proxima.svc.cluster.local:2379"
   GEO_NODE_0_PREFIX_START: ""
   GEO_NODE_0_PREFIX_END:   "5"
   GEO_NODE_1_PREFIX_START: "5"
   GEO_NODE_1_PREFIX_END:   "a"
   GEO_NODE_2_PREFIX_START: "a"
   GEO_NODE_2_PREFIX_END:   ""
+  # Operational alerting guidance. Topology changes are initiated through the
+  # authenticated split/merge API; no automatic controller is shipped yet.
   SPLIT_THRESHOLD_KEYS:      "500000"
   SPLIT_THRESHOLD_WRITE_QPS: "50000"
   MERGE_THRESHOLD_KEYS:      "25000"

@@ -16,6 +16,30 @@ pub struct GeoEntry {
     pub written_at: u64,
 }
 
+impl GeoEntry {
+    /// Creates an entry whose stable storage identity is an arbitrary JSON
+    /// value. The value is canonically encoded into `id`, so equivalent object
+    /// values produce the same Redis/trie key regardless of field order.
+    ///
+    /// The complete value remains available to callers in `payload`; Redis
+    /// indexes continue to use the string `id` for efficient set membership
+    /// and reverse lookups.
+    pub fn from_json_identity(
+        identity: serde_json::Value,
+        lat: f64,
+        lon: f64,
+        payload: serde_json::Value,
+    ) -> Self {
+        Self {
+            id: format!("json:{}", canonical_json(&identity)),
+            lat,
+            lon,
+            payload,
+            written_at: 0,
+        }
+    }
+}
+
 #[derive(Default)]
 struct TrieNode {
     children: HashMap<u8, Box<TrieNode>>,
@@ -147,6 +171,41 @@ fn s2_token(cell: CellID) -> String {
     }
     let hex = format!("{:016x}", cell.0);
     hex.trim_end_matches('0').to_string()
+}
+
+/// Produces a deterministic JSON representation for use as a stable entry
+/// identity. Object keys are sorted recursively; strings are escaped by
+/// serde_json so the result remains unambiguous and valid JSON.
+fn canonical_json(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => serde_json::to_string(value).expect("JSON value serializes"),
+        serde_json::Value::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(canonical_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        serde_json::Value::Object(values) => {
+            let mut keys: Vec<&String> = values.keys().collect();
+            keys.sort_unstable();
+            let fields = keys
+                .into_iter()
+                .map(|key| {
+                    format!(
+                        "{}:{}",
+                        serde_json::to_string(key).expect("JSON object key serializes"),
+                        canonical_json(&values[key])
+                    )
+                })
+                .collect::<Vec<_>>();
+            format!("{{{}}}", fields.join(","))
+        }
+    }
 }
 
 fn descend_mut<'a>(node: &'a mut TrieNode, bytes: &[u8]) -> &'a mut TrieNode {

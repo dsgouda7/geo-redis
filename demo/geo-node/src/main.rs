@@ -13,7 +13,9 @@ use axum::{
 };
 
 mod grpc;
+mod metadata;
 mod snapshot;
+use metadata::{ClaimResult, EtcdRangeAuthority};
 use proxima::{
     cluster::{ClusterRing, NodeInfo, NodeStatus},
     GeoEntry,
@@ -72,6 +74,9 @@ struct Config {
     redis_cluster_urls: Vec<String>,
     /// Port for the gRPC server. Defaults to http_port + 10.
     grpc_port: u16,
+    /// Comma-separated etcd v3 endpoints used for consensus-backed range
+    /// ownership. Required for production split/merge deployments.
+    metadata_etcd_endpoints: Vec<String>,
 }
 
 impl Config {
@@ -111,6 +116,12 @@ impl Config {
                 .map(String::from)
                 .collect(),
             grpc_port: env_parse("GRPC_PORT", port + 10),
+            metadata_etcd_endpoints: env("METADATA_ETCD_ENDPOINTS", "")
+                .split(',')
+                .map(str::trim)
+                .filter(|endpoint| !endpoint.is_empty())
+                .map(String::from)
+                .collect(),
         }
     }
 }
@@ -140,6 +151,7 @@ struct AppState {
     /// RedisStore wrapping the same Redis connection.
     /// Used for the lib-level `entities_written_after` delta-sync query.
     store: Arc<RedisStore>,
+    metadata: EtcdRangeAuthority,
 }
 
 impl AppState {
@@ -185,17 +197,24 @@ impl AppState {
             .expect("RedisStore cluster init")
             .with_namespace(&cfg.key_namespace)
         });
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let metadata = EtcdRangeAuthority::new(
+            cfg.metadata_etcd_endpoints.clone(),
+            http.clone(),
+            &cfg.key_namespace,
+        );
         Ok(Self {
             cfg,
             ring: Arc::new(RwLock::new(ring)),
             my_info: Arc::new(RwLock::new(my)),
             redis: redis.clone(),
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(3))
-                .build()
-                .unwrap(),
+            http,
             snapshot: snap,
             store,
+            metadata,
         })
     }
 }
@@ -717,13 +736,48 @@ async fn route_trigger_split(
         s.ring.write().await.merge(my.clone());
     }
 
-    let migrated = migrate_keys(&s, &req.target, &split_point)
-        .await
-        .map_err(err)?;
+    // Record the delta watermark before copying. The source remains the sole
+    // owner until the target has copied this snapshot and caught up from it.
+    let snapshot_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let migrated = match migrate_keys(&s, &req.target, &split_point).await {
+        Ok(migrated) => migrated,
+        Err(error) => return Err(split_failed(&s, error).await),
+    };
 
     let old_end = s.my_info.read().await.prefix_end.clone();
 
-    // Update our own range: we now own [prefix_start, split_point)
+    // Tell the target its new range: [split_point, old_end)
+    // while this node continues serving the original range. A failed
+    // assignment therefore leaves no routing hole and no lost source data.
+    let assignment = cluster_request(
+        &s,
+        s.http
+            .put(format!("http://{}/assign-range", req.target))
+            .json(&AssignRangeRequest {
+                prefix_start: split_point.clone(),
+                prefix_end: old_end.clone(),
+                source_addr: Some(s.cfg.http_addr.clone()),
+                snapshot_timestamp: Some(snapshot_ts),
+            }),
+    )
+    .send()
+    .await
+    .and_then(|response| response.error_for_status());
+    if let Err(error) = assignment {
+        return Err(split_failed(&s, error.into()).await);
+    }
+
+    if let Err(error) = wait_for_target_active(&s, &req.target, &split_point, &old_end).await {
+        return Err(split_failed(&s, error).await);
+    }
+
+    // The target has acknowledged its range and completed delta-sync. Cleanup
+    // happens before contracting this node's route; failure leaves duplicate
+    // data but preserves availability and can be retried safely.
+    remove_migrated_keys(&s, &split_point).await.map_err(err)?;
     {
         let mut my = s.my_info.write().await;
         my.prefix_end = split_point.clone();
@@ -731,26 +785,6 @@ async fn route_trigger_split(
         my.generation += 1;
         s.ring.write().await.merge(my.clone());
     }
-
-    // Tell the target its new range: [split_point, old_end)
-    // Include this node's address and the snapshot timestamp so the target
-    // can perform a delta-sync catch-up independently.
-    let snapshot_ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-
-    s.http
-        .put(format!("http://{}/assign-range", req.target))
-        .json(&AssignRangeRequest {
-            prefix_start: split_point.clone(),
-            prefix_end: old_end.clone(),
-            source_addr: Some(s.cfg.http_addr.clone()),
-            snapshot_timestamp: Some(snapshot_ts),
-        })
-        .send()
-        .await
-        .map_err(|e| err(e.into()))?;
 
     info!(
         "Split complete: migrated {} keys to {}",
@@ -762,6 +796,16 @@ async fn route_trigger_split(
         split_point,
         new_prefix_end: old_end,
     }))
+}
+
+/// Return the source to its pre-split serving state. This runs only before
+/// cleanup starts; its entities and full range are still present at this point.
+async fn split_failed(s: &AppState, error: anyhow::Error) -> (StatusCode, String) {
+    let mut my = s.my_info.write().await;
+    my.status = NodeStatus::Active;
+    my.generation += 1;
+    s.ring.write().await.merge(my.clone());
+    (StatusCode::BAD_GATEWAY, error.to_string())
 }
 
 // ── Merge ──────────────────────────────────────────────────────────────────
@@ -912,12 +956,12 @@ async fn find_median_split(s: &AppState) -> Result<String> {
 
 /// Migrate all entity + cell keys with token >= split_point to the target node.
 ///
-/// Two-phase collect-then-delete ensures idempotency:
+/// Copying is idempotent and intentionally leaves the source intact:
 ///   Phase 1 — Scan and collect matching keys (read-only, nothing deleted yet).
-///   Phase 2 — For each chunk: POST to target, confirm 2xx, THEN delete from source.
+///   Phase 2 — For each chunk: POST to target and confirm persistence.
 ///
-/// If delivery fails mid-way, source keys are still intact so the split can be
-/// retried safely. The target's /ingest endpoint is idempotent (upsert).
+/// The source is cleaned only after the target has completed bootstrap, so a
+/// failed assignment or delta-sync cannot create an unowned routing range.
 async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u64> {
     let mut conn = s.redis.get_multiplexed_async_connection().await?;
 
@@ -958,8 +1002,7 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
         total, target
     );
 
-    // ── Phase 2: For each chunk — build snapshot entries, deliver to target,
-    //             then delete from source only after confirmed persistence.
+    // ── Phase 2: For each chunk — build snapshot entries and deliver them.
     //
     //   /ingest-snapshot writes to the target's SQLite first, then Redis.
     //   If the target crashes after acknowledging, it can self-restore from
@@ -976,12 +1019,14 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
             .collect();
 
         // Prefer /ingest-snapshot; fall back to /ingest for older nodes.
-        let resp = s
-            .http
-            .post(format!("http://{target}/ingest-snapshot"))
-            .json(&snap_entries)
-            .send()
-            .await?;
+        let resp = cluster_request(
+            s,
+            s.http
+                .post(format!("http://{target}/ingest-snapshot"))
+                .json(&snap_entries),
+        )
+        .send()
+        .await?;
 
         if !resp.status().is_success() {
             anyhow::bail!(
@@ -990,17 +1035,81 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
                 resp.status()
             );
         }
+    }
 
-        // Target confirmed persistence — now safe to remove from source.
-        for (key, _) in chunk {
-            conn.del::<_, ()>(key).await?;
+    Ok(total)
+}
+
+fn cluster_request(state: &AppState, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    if state.cfg.api_key.is_empty() {
+        request
+    } else {
+        request.header("x-api-key", &state.cfg.api_key)
+    }
+}
+
+async fn wait_for_target_active(
+    state: &AppState,
+    target: &str,
+    prefix_start: &str,
+    prefix_end: &str,
+) -> Result<()> {
+    const ATTEMPTS: usize = 60;
+    for _ in 0..ATTEMPTS {
+        if let Ok(response) = state
+            .http
+            .get(format!("http://{target}/state"))
+            .send()
+            .await
+        {
+            if response.status().is_success() {
+                if let Ok(node) = response.json::<NodeInfo>().await {
+                    if node.status == NodeStatus::Active
+                        && node.prefix_start == prefix_start
+                        && node.prefix_end == prefix_end
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    anyhow::bail!("target {target} did not become Active for range [{prefix_start}, {prefix_end})")
+}
+
+async fn remove_migrated_keys(s: &AppState, split_point: &str) -> Result<()> {
+    let mut conn = s.redis.get_multiplexed_async_connection().await?;
+    let mut cursor = 0u64;
+    loop {
+        let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(s.store.k_entity_pattern())
+            .arg("COUNT")
+            .arg(200)
+            .query_async(&mut conn)
+            .await?;
+        for key in keys {
+            if let Ok(Some(json)) = conn.get::<_, Option<String>>(&key).await {
+                if let Ok(entry) = serde_json::from_str::<GeoEntry>(&json) {
+                    if cell_token(entry.lat, entry.lon, s.cfg.s2_level).as_str() >= split_point {
+                        conn.del::<_, ()>(key).await?;
+                        conn.del::<_, ()>(s.store.k_location(&entry.id)).await?;
+                    }
+                }
+            }
+        }
+        cursor = next_cursor;
+        if cursor == 0 {
+            break;
         }
     }
 
-    // ── Phase 3: Migrate cell index keys for tokens >= split_point ────────
     cursor = 0;
+    let cell_prefix = format!("{{{}}}:cell:", s.store.key_prefix());
     loop {
-        let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+        let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
             .arg(cursor)
             .arg("MATCH")
             .arg(s.store.k_cell_pattern())
@@ -1008,33 +1117,17 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
             .arg(200)
             .query_async(&mut conn)
             .await?;
-
-        for key in &keys {
-            let kp = format!("{{{}}}:cell:", s.store.key_prefix());
-            let token = key.trim_start_matches(kp.as_str());
-            if token >= split_point {
-                let members: Vec<String> = conn.smembers(key).await?;
-                if !members.is_empty() {
-                    s.http
-                        .post(format!("http://{target}/ingest-cell"))
-                        .json(&IngestCellRequest {
-                            token: token.to_string(),
-                            ids: members,
-                        })
-                        .send()
-                        .await?;
-                }
+        for key in keys {
+            if key.trim_start_matches(&cell_prefix) >= split_point {
                 conn.del::<_, ()>(key).await?;
             }
         }
-
-        cursor = new_cur;
+        cursor = next_cursor;
         if cursor == 0 {
             break;
         }
     }
-
-    Ok(total)
+    Ok(())
 }
 
 /// Retained for backward compatibility with older nodes that don't support
@@ -1300,12 +1393,15 @@ async fn route_assign_range(
     // This is called by the absorbing node after a successful merge.
     if req.prefix_start.is_empty() && req.prefix_end.is_empty() {
         info!("Releasing range — transitioning to Standby");
-        // Release the range claim lock if we held one.
-        if let Ok(mut conn) = s.redis.get_multiplexed_async_connection().await {
-            let old_start = s.my_info.read().await.prefix_start.clone();
-            if !old_start.is_empty() {
-                let lock_key = s.store.k_range_claim(&old_start);
-                let _: () = conn.del(&lock_key).await.unwrap_or(());
+        let old_start = s.my_info.read().await.prefix_start.clone();
+        if !old_start.is_empty() {
+            if !s.metadata.enabled() {
+                tracing::error!("Cannot release range without configured etcd metadata authority");
+                return StatusCode::SERVICE_UNAVAILABLE;
+            }
+            if let Err(error) = s.metadata.release(&old_start, &s.cfg.node_id).await {
+                tracing::error!("Cannot release consensus range claim: {error}");
+                return StatusCode::CONFLICT;
             }
         }
         let mut my = s.my_info.write().await;
@@ -1317,42 +1413,27 @@ async fn route_assign_range(
         return StatusCode::OK;
     }
 
-    // ── Range claim CAS (split-brain guard) ───────────────────────────────
-    // Use Redis SET NX EX to atomically claim this prefix range.  If another
-    // node has already claimed the same prefix_start (e.g. due to a split
-    // retry or network partition), return 409 so the orchestrator can retry
-    // with the correct target.  The lock TTL (120 s) ensures it auto-releases
-    // if this node crashes before transitioning to Active.
-    {
-        let lock_key = s.store.k_range_claim(&req.prefix_start);
-        let node_id = s.cfg.node_id.clone();
-        match s.redis.get_multiplexed_async_connection().await {
-            Ok(mut conn) => {
-                let result: Option<String> = redis::cmd("SET")
-                    .arg(&lock_key)
-                    .arg(&node_id)
-                    .arg("NX")
-                    .arg("EX")
-                    .arg(120u64)
-                    .query_async(&mut conn)
-                    .await
-                    .unwrap_or(None);
-                if result.is_none() {
-                    // Lock exists — check whether this node already holds it
-                    // (idempotent retry is fine; foreign holder is a conflict).
-                    let holder: String = conn.get(&lock_key).await.unwrap_or_default();
-                    if holder != node_id {
-                        tracing::warn!(
-                            "Range claim conflict: prefix {} already claimed by {}",
-                            req.prefix_start,
-                            holder
-                        );
-                        return StatusCode::CONFLICT;
-                    }
-                    // This node already holds the claim — idempotent, continue.
-                }
-            }
-            Err(e) => tracing::warn!("Redis unavailable for range claim CAS: {e}"),
+    // A range has one authoritative owner, decided by an etcd Raft transaction.
+    // Redis replication and local locks cannot provide this guarantee under a
+    // network partition, so split/merge is unavailable without this authority.
+    if !s.metadata.enabled() {
+        tracing::error!("Rejecting range assignment: METADATA_ETCD_ENDPOINTS is required");
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
+    match s.metadata.claim(&req.prefix_start, &s.cfg.node_id).await {
+        Ok(ClaimResult::Granted) => {}
+        Ok(ClaimResult::HeldBy(holder)) if holder == s.cfg.node_id => {}
+        Ok(ClaimResult::HeldBy(holder)) => {
+            tracing::warn!(
+                "Range claim conflict: prefix {} held by {}",
+                req.prefix_start,
+                holder
+            );
+            return StatusCode::CONFLICT;
+        }
+        Err(error) => {
+            tracing::error!("Consensus range claim unavailable: {error}");
+            return StatusCode::SERVICE_UNAVAILABLE;
         }
     }
 
@@ -1394,36 +1475,35 @@ async fn bootstrap_delta_sync(
 ) {
     tokio::time::sleep(Duration::from_secs(3)).await; // let /ingest-snapshot settle
 
-    if let Some(src) = source_addr {
-        let url = format!("http://{src}/delta-sync?since_ms={since_ms}");
-        tracing::info!("Bootstrap: requesting delta sync from {src} (since {since_ms} ms)");
+    let Some(src) = source_addr else {
+        tracing::error!("Bootstrap: no source address; remaining Bootstrapping");
+        return;
+    };
+    let url = format!("http://{src}/delta-sync?since_ms={since_ms}");
+    tracing::info!("Bootstrap: requesting delta sync from {src} (since {since_ms} ms)");
 
-        match s.http.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                if let Ok(mut delta) = resp.json::<Vec<GeoEntry>>().await {
-                    tracing::info!("Bootstrap: received {} delta entries", delta.len());
-                    let now_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                    for e in &mut delta {
-                        if e.written_at == 0 {
-                            e.written_at = now_ms;
-                        }
-                    }
-                    // store.merge_entries applies the freshness check — only
-                    // entries newer than what's already in this shard are written.
-                    match s.store.merge_entries(&delta, s.cfg.s2_level).await {
-                        Ok(n) => {
-                            tracing::info!("Bootstrap: applied {n}/{} delta entries", delta.len())
-                        }
-                        Err(e) => tracing::warn!("Bootstrap: merge_entries failed: {e}"),
-                    }
-                }
+    let delta = match s.http.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => match resp.json::<Vec<GeoEntry>>().await {
+            Ok(delta) => delta,
+            Err(e) => {
+                tracing::warn!("Bootstrap: invalid delta-sync response: {e}");
+                return;
             }
-            Ok(r) => tracing::warn!("Bootstrap: delta sync returned {}", r.status()),
-            Err(e) => tracing::warn!("Bootstrap: delta sync failed: {e}"),
+        },
+        Ok(resp) => {
+            tracing::warn!("Bootstrap: delta sync returned {}", resp.status());
+            return;
         }
+        Err(e) => {
+            tracing::warn!("Bootstrap: delta sync failed: {e}");
+            return;
+        }
+    };
+
+    tracing::info!("Bootstrap: received {} delta entries", delta.len());
+    if let Err(e) = s.store.merge_entries(&delta, s.cfg.s2_level).await {
+        tracing::warn!("Bootstrap: merge_entries failed: {e}");
+        return;
     }
 
     let mut my = s.my_info.write().await;
@@ -1434,14 +1514,6 @@ async fn bootstrap_delta_sync(
         "Bootstrap complete — node [{}, {}) is Active",
         prefix_start, prefix_end
     );
-
-    // Release the range-claim lock now that we are Active — the lock's purpose
-    // was to prevent a second node from stealing the same range during bootstrap.
-    // (The 120 s TTL is just the safety-net if we crash before reaching here.)
-    if let Ok(mut conn) = s.redis.get_multiplexed_async_connection().await {
-        let lock_key = s.store.k_range_claim(&prefix_start);
-        let _: () = conn.del(&lock_key).await.unwrap_or(());
-    }
 }
 
 // ── Cross-shard entity cleanup ─────────────────────────────────────────────

@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: geo-node-0-data
+  namespace: proxima
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 10Gi }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: geo-node-1-data
+  namespace: proxima
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 10Gi }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: geo-node-2-data
+  namespace: proxima
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 10Gi }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: geo-node-3-data
+  namespace: proxima
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 10Gi }

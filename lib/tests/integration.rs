@@ -172,6 +172,30 @@ fn payload_preserved_on_query() {
     assert_eq!(r[0].payload["on_ground"], false);
 }
 
+#[test]
+fn json_identity_is_canonical_and_queryable() {
+    let first = GeoEntry::from_json_identity(
+        json!({"tenant": "acme", "device": {"kind": "sensor", "serial": 7}}),
+        51.5,
+        -0.1,
+        json!({"reading": 42}),
+    );
+    let second = GeoEntry::from_json_identity(
+        json!({"device": {"serial": 7, "kind": "sensor"}, "tenant": "acme"}),
+        51.5,
+        -0.1,
+        json!({"reading": 43}),
+    );
+    assert_eq!(first.id, second.id, "object field order must not change identity");
+
+    let mut trie = GeoTrie::new(9);
+    trie.insert(first);
+    let token = trie.cell_token(51.5, -0.1);
+    let entries = trie.query_token(&token);
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].id.starts_with("json:{"));
+}
+
 // ── remove_at_token + branch pruning ─────────────────────────────────────
 
 #[test]

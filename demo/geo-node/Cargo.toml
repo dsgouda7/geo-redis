@@ -2,7 +2,7 @@
 name        = "proxima-geo-node"
 version     = "0.1.0"
 edition     = "2021"
-description = "Geo-sharded Redis cluster node with SWIM-lite gossip and auto-split"
+description = "Geo-sharded Redis cluster node with SWIM-lite gossip and operator-triggered split/merge"
 
 [dependencies]
 proxima            = { path = "../../lib" }
@@ -23,3 +23,4 @@ rusqlite           = { version = "0.31", features = ["bundled"] }
 subtle             = "2"
 tonic              = { version = "0.11", features = ["codegen", "transport"] }
 prost              = "0.12"
+base64             = "0.22"

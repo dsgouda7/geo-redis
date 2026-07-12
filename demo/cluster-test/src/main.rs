@@ -35,9 +35,7 @@ use testcontainers::{runners::AsyncRunner, GenericImage};
 const ENTITIES_PER_SHARD: usize = 25_000;
 const S2_LEVEL: u8 = 9;
 const TTL_SECS: u64 = 300; // generous TTL for tests
-const SPLIT_PREFIX: &str = "8"; // token >= "8" → shard-1
-
-// ── Entry point ───────────────────────────────────────────────────────────
+                           // ── Entry point ───────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -143,15 +141,16 @@ async fn main() -> Result<()> {
     // ── Phase 3: Split seeding ───────────────────────────────────────────────
     println!("\nPhase 3 — SPLIT SEEDING (snapshot-first via merge_entries)");
 
-    // Collect entities from shard-0 that belong to [SPLIT_PREFIX, ∅) → migrate to shard-1
-    let migrating = collect_range(&trie0, SPLIT_PREFIX, "");
+    // Derive a populated split point from shard-0's actual S2 distribution.
+    let split_prefix = median_split_point(&trie0);
+    let migrating = collect_range(&trie0, &split_prefix, "");
 
     run_phase!("Collect entities >= split prefix", {
         if migrating.is_empty() {
             anyhow::bail!("no entities in split range — increase entity count");
         }
         Ok::<_, anyhow::Error>(format!(
-            "{} entities to migrate (prefix >= '{SPLIT_PREFIX}')",
+            "{} entities to migrate (prefix >= '{split_prefix}')",
             migrating.len()
         ))
     });
@@ -390,40 +389,10 @@ fn generate_random_trie(n: usize, seed: u64) -> GeoTrie {
     trie
 }
 
-/// Generate two tries split at the Americas / rest-of-world boundary.
-/// Shard-0 gets tokens < SPLIT_PREFIX, shard-1 gets tokens >= SPLIT_PREFIX.
+/// Generate two independent populated shards for the split lifecycle.
 fn generate_split_tries(per_shard: usize, verbose: bool) -> (GeoTrie, GeoTrie) {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(42);
-    let helper = GeoTrie::new(S2_LEVEL);
-    let mut trie0 = GeoTrie::new(S2_LEVEL);
-    let mut trie1 = GeoTrie::new(S2_LEVEL);
-    let mut placed = (0usize, 0usize);
-
-    for i in 0usize.. {
-        let lat = rng.gen_range(-85.0_f64..85.0);
-        let lon = rng.gen_range(-180.0_f64..180.0);
-        let tok = helper.cell_token(lat, lon);
-        let entry = GeoEntry {
-            id: format!("split-{i:08}"),
-            lat,
-            lon,
-            payload: json!({ "idx": i }),
-            written_at: 0,
-        };
-        if tok.as_str() < SPLIT_PREFIX && placed.0 < per_shard {
-            trie0.insert(entry);
-            placed.0 += 1;
-        } else if tok.as_str() >= SPLIT_PREFIX && placed.1 < per_shard {
-            trie1.insert(entry);
-            placed.1 += 1;
-        }
-        if placed.0 >= per_shard && placed.1 >= per_shard {
-            break;
-        }
-        if i > per_shard * 20 {
-            break;
-        } // safety guard
-    }
+    let trie0 = generate_random_trie(per_shard, 42);
+    let trie1 = generate_random_trie(per_shard, 43);
     if verbose {
         println!(
             "  Generated trie0={} trie1={} entities",
@@ -432,6 +401,17 @@ fn generate_split_tries(per_shard: usize, verbose: bool) -> (GeoTrie, GeoTrie) {
         );
     }
     (trie0, trie1)
+}
+
+fn median_split_point(trie: &GeoTrie) -> String {
+    let helper = GeoTrie::new(S2_LEVEL);
+    let mut tokens: Vec<String> = trie
+        .all_entries()
+        .iter()
+        .map(|entry| helper.cell_token(entry.lat, entry.lon))
+        .collect();
+    tokens.sort();
+    tokens[tokens.len() / 2].clone()
 }
 
 /// Collect all entries from a trie whose token falls in [start, end).

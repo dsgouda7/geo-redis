@@ -9,15 +9,17 @@ interface Props {
   aircraft: Aircraft[];
   onSelect: (a: Aircraft) => void;
   selected: string | null;
+  isWeather?: boolean;
 }
 
-export default function AircraftPanel({ aircraft, onSelect, selected }: Props) {
+export default function AircraftPanel({ aircraft, onSelect, selected, isWeather = false }: Props) {
   const [open,   setOpen]   = useState(true);
   const [filter, setFilter] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Sort: airborne first by altitude desc, then ground alphabetically
+  // Flights sort by altitude; weather stations sort by temperature.
   const sorted = [...aircraft].sort((a, b) => {
+    if (isWeather) return (b.payload.temp_c ?? -Infinity) - (a.payload.temp_c ?? -Infinity);
     const aAlt = a.payload.altitude ?? -1;
     const bAlt = b.payload.altitude ?? -1;
     if (a.payload.on_ground !== b.payload.on_ground) {
@@ -36,8 +38,8 @@ export default function AircraftPanel({ aircraft, onSelect, selected }: Props) {
 
   const displayed = filtered.slice(0, 120);
 
-  const airborne = aircraft.filter(a => !a.payload.on_ground).length;
-  const ground   = aircraft.length - airborne;
+  const warm = aircraft.filter(a => (a.payload.temp_c ?? 0) >= 15).length;
+  const cool = aircraft.length - warm;
 
   return (
     <div style={{
@@ -66,10 +68,10 @@ export default function AircraftPanel({ aircraft, onSelect, selected }: Props) {
           textAlign: 'left', width: '100%',
         }}
       >
-        <span style={{ fontSize: 18 }}>✈</span>
+        <span style={{ fontSize: 18 }}>{isWeather ? '🌦️' : '✈'}</span>
         {open && (
           <>
-            <span style={{ color: '#e2e8f0' }}>Live Flights</span>
+            <span style={{ color: '#e2e8f0' }}>{isWeather ? 'Weather Stations' : 'Live Flights'}</span>
             <span style={{
               marginLeft: 'auto',
               background: '#0ea5e9', color: '#fff',
@@ -86,8 +88,17 @@ export default function AircraftPanel({ aircraft, onSelect, selected }: Props) {
             display: 'flex', gap: 0, borderTop: '1px solid rgba(255,255,255,0.06)',
             borderBottom: '1px solid rgba(255,255,255,0.06)',
           }}>
-            <StatChip icon="🛫" label="Airborne" value={airborne.toLocaleString()} color="#38bdf8" />
-            <StatChip icon="🛬" label="Ground"   value={ground.toLocaleString()}   color="#64748b" />
+            {isWeather ? (
+              <>
+                <StatChip icon="☀️" label="≥15°C" value={warm.toLocaleString()} color="#f59e0b" />
+                <StatChip icon="❄️" label="<15°C" value={cool.toLocaleString()} color="#38bdf8" />
+              </>
+            ) : (
+              <>
+                <StatChip icon="🛫" label="Airborne" value={aircraft.filter(a => !a.payload.on_ground).length.toLocaleString()} color="#38bdf8" />
+                <StatChip icon="🛬" label="Ground" value={aircraft.filter(a => a.payload.on_ground).length.toLocaleString()} color="#64748b" />
+              </>
+            )}
           </div>
 
           {/* Search */}
@@ -95,7 +106,7 @@ export default function AircraftPanel({ aircraft, onSelect, selected }: Props) {
             <input
               value={filter}
               onChange={e => setFilter(e.target.value)}
-              placeholder="Search callsign / country…"
+              placeholder={isWeather ? 'Search station / condition…' : 'Search callsign / country…'}
               style={{
                 width: '100%', background: 'rgba(255,255,255,0.07)',
                 border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6,
@@ -113,6 +124,7 @@ export default function AircraftPanel({ aircraft, onSelect, selected }: Props) {
                 aircraft={a}
                 selected={selected === a.id}
                 onClick={onSelect}
+                isWeather={isWeather}
               />
             ))}
             {filtered.length > 120 && (
@@ -130,11 +142,39 @@ export default function AircraftPanel({ aircraft, onSelect, selected }: Props) {
 // ── Row ──────────────────────────────────────────────────────────────────────
 
 function AircraftRow({
-  aircraft: a, selected, onClick,
-}: { aircraft: Aircraft; selected: boolean; onClick: (a: Aircraft) => void }) {
+  aircraft: a, selected, onClick, isWeather,
+}: { aircraft: Aircraft; selected: boolean; onClick: (a: Aircraft) => void; isWeather: boolean }) {
   const type  = getAircraftType(a.payload);
   const color = getAltitudeColor(a.payload);
   const flag  = countryFlag(a.payload.origin_country);
+  const temp = a.payload.temp_c;
+
+  if (isWeather) {
+    return (
+      <div
+        onClick={() => onClick(a)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', cursor: 'pointer',
+          background: selected ? 'rgba(56,189,248,0.1)' : 'transparent',
+          borderLeft: selected ? '3px solid #38bdf8' : '3px solid transparent', transition: 'background 0.15s',
+        }}
+        onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+        onMouseLeave={e => { if (!selected) e.currentTarget.style.background = 'transparent'; }}
+      >
+        <span style={{ fontSize: 20, width: 30, textAlign: 'center' }}>🌦️</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 12, color: '#f1f5f9', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {a.payload.callsign ?? a.id.toUpperCase()}
+          </div>
+          <div style={{ display: 'flex', gap: 8, fontSize: 10, color: '#64748b', marginTop: 1 }}>
+            <span style={{ color: '#fbbf24' }}>{temp == null ? '—' : `${temp > 0 ? '+' : ''}${Math.round(temp)}°C`}</span>
+            <span>{a.payload.velocity == null ? '—' : `${Math.round(a.payload.velocity)} kt`}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{a.payload.origin_country ?? '—'}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

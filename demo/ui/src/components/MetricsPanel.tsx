@@ -4,9 +4,10 @@ const ms = (us: number) => `${(us / 1000).toFixed(2)} ms`;
 
 interface Props {
   metrics: MetricsResponse;
+  entityLabel?: string;
 }
 
-export default function MetricsPanel({ metrics: { metrics: m, trie_size, last_sync } }: Props) {
+export default function MetricsPanel({ metrics: { metrics: m, trie_size, last_sync }, entityLabel = 'Aircraft' }: Props) {
   const syncTime = last_sync
     ? new Date(last_sync * 1000).toLocaleTimeString()
     : 'pending…';
@@ -32,7 +33,7 @@ export default function MetricsPanel({ metrics: { metrics: m, trie_size, last_sy
       <div style={{ fontWeight: 700, fontSize: '0.82rem', marginBottom: 4 }}>
         Redis Metrics
       </div>
-      <div>Aircraft in trie: <b>{trie_size.toLocaleString()}</b></div>
+      <div>{entityLabel} in trie: <b>{trie_size.toLocaleString()}</b></div>
       <div>Last sync: <b>{syncTime}</b></div>
 
       <hr style={{ border: 'none', borderTop: '1px solid #334155', margin: '6px 0' }} />

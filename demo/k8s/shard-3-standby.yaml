@@ -16,7 +16,7 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
-          args: ["redis-server", "--save", "", "--appendonly", "no"]
+          args: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
           ports:
             - containerPort: 6379
           resources:
@@ -27,12 +27,22 @@ spec:
               command: ["redis-cli", "ping"]
             initialDelaySeconds: 3
             periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: shard-data
+              mountPath: /data
         - name: geo-node
           image: proxima-geo-node:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4003
               name: http
+            - containerPort: 4013
+              name: grpc
           env:
             - { name: NODE_ID, value: "node-3" }
             - { name: NODE_ADDR, value: "geo-node-3:4003" }
@@ -42,15 +52,29 @@ spec:
             - { name: PREFIX_END, value: "" }
             - { name: SEED_PEERS, value: "geo-node-0:4000,geo-node-1:4001,geo-node-2:4002" }
             - { name: S2_LEVEL, valueFrom: { configMapKeyRef: { name: proxima-ring, key: S2_LEVEL } } }
+            - { name: SNAPSHOT_PATH, value: "/data/snapshot.db" }
             - { name: ENTITY_TTL_SECS, valueFrom: { configMapKeyRef: { name: proxima-ring, key: ENTITY_TTL_SECS } } }
+            - { name: METADATA_ETCD_ENDPOINTS, valueFrom: { configMapKeyRef: { name: proxima-ring, key: METADATA_ETCD_ENDPOINTS } } }
             - { name: RUST_LOG, value: "info" }
           resources:
             requests: { memory: "128Mi", cpu: "100m" }
             limits:   { memory: "256Mi", cpu: "500m" }
+          volumeMounts:
+            - name: shard-data
+              mountPath: /data
           readinessProbe:
             httpGet: { path: /health, port: 4003 }
             initialDelaySeconds: 5
             periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 4003 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+      volumes:
+        - name: shard-data
+          persistentVolumeClaim:
+            claimName: geo-node-3-data
 ---
 apiVersion: v1
 kind: Service
@@ -62,3 +86,5 @@ spec:
   ports:
     - port: 4003
       name: http
+    - port: 4013
+      name: grpc
