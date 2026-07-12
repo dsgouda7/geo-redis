@@ -30,80 +30,88 @@ use tracing::info;
 
 #[derive(Debug, Clone)]
 struct Config {
-    node_id:      String,
-    http_addr:    String,
-    http_port:    u16,
-    redis_url:    String,
+    node_id: String,
+    http_addr: String,
+    http_port: u16,
+    redis_url: String,
     prefix_start: String,
-    prefix_end:   String,
-    seed_peers:   Vec<String>,
-    s2_level:     u8,
+    prefix_end: String,
+    seed_peers: Vec<String>,
+    s2_level: u8,
     // Auto-split/merge thresholds — documented in README + K8s configmap.
     // Read at startup and stored for a future automatic-split trigger;
     // splits are currently initiated via POST /split.
     #[allow(dead_code)]
-    split_threshold_keys:      u64,
+    split_threshold_keys: u64,
     #[allow(dead_code)]
     split_threshold_write_qps: f64,
     #[allow(dead_code)]
-    merge_threshold_keys:      u64,
+    merge_threshold_keys: u64,
     // ── Gossip timing ─────────────────────────────────────────────────────
-    suspect_secs:           u64,
-    dead_secs:              u64,
-    gossip_interval_secs:   u64,
+    suspect_secs: u64,
+    dead_secs: u64,
+    gossip_interval_secs: u64,
     // ── Snapshot / recovery ───────────────────────────────────────────────
     /// Path for the SQLite snapshot DB. Empty string = disabled.
-    snapshot_path:          String,
+    snapshot_path: String,
     snapshot_interval_secs: u64,
     /// Redis TTL for entity keys. Set to 2× your write interval so stale
     /// cross-shard data expires promptly after an entity moves regions.
     entity_ttl_secs: u64,
     /// If non-empty, all write endpoints require `X-API-Key: <value>`.
     /// Leave empty in dev. Set via API_KEY env var in production.
-    api_key:          String,
+    api_key: String,
     /// Redis key namespace prefix. Defaults to "proxima".
     /// Override via KEY_NAMESPACE env var for multi-tenant isolation
     /// (multiple logical datasets on the same Redis instance).
-    key_namespace:    String,
+    key_namespace: String,
     /// Comma-separated Redis Cluster node URLs.
     /// When non-empty, the store uses redis::cluster::ClusterClient.
     /// All keys use {namespace} hash tags, so SUNION/Lua/pipelines work.
     /// Example: redis://node1:6379,redis://node2:6379,redis://node3:6379
     redis_cluster_urls: Vec<String>,
     /// Port for the gRPC server. Defaults to http_port + 10.
-    grpc_port:        u16,
+    grpc_port: u16,
 }
 
 impl Config {
     fn from_env() -> Self {
         let port: u16 = env("HTTP_PORT", "4000").parse().unwrap_or(4000);
         Self {
-            node_id:      env("NODE_ID",      "node-0"),
-            http_addr:    env("NODE_ADDR",    &format!("localhost:{port}")),
-            http_port:    port,
-            redis_url:    env("REDIS_URL",    "redis://127.0.0.1:6379"),
+            node_id: env("NODE_ID", "node-0"),
+            http_addr: env("NODE_ADDR", &format!("localhost:{port}")),
+            http_port: port,
+            redis_url: env("REDIS_URL", "redis://127.0.0.1:6379"),
             prefix_start: env("PREFIX_START", ""),
-            prefix_end:   env("PREFIX_END",   ""),
-            seed_peers:   env("SEED_PEERS",   "")
-                .split(',').map(str::trim).filter(|s| !s.is_empty())
-                .map(String::from).collect(),
-            s2_level:     env("S2_LEVEL", "9").parse().unwrap_or(9),
+            prefix_end: env("PREFIX_END", ""),
+            seed_peers: env("SEED_PEERS", "")
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
+            s2_level: env("S2_LEVEL", "9").parse().unwrap_or(9),
             // Thresholds — override in cluster-compose.yml or K8s ConfigMap
-            split_threshold_keys:      env_parse("SPLIT_THRESHOLD_KEYS",      500_000u64),
+            split_threshold_keys: env_parse("SPLIT_THRESHOLD_KEYS", 500_000u64),
             split_threshold_write_qps: env_parse("SPLIT_THRESHOLD_WRITE_QPS", 50_000f64),
-            merge_threshold_keys:      env_parse("MERGE_THRESHOLD_KEYS",      25_000u64),
-            suspect_secs:              env_parse("SUSPECT_SECS",              10u64),
-            dead_secs:                 env_parse("DEAD_SECS",                 30u64),
-            gossip_interval_secs:      env_parse("GOSSIP_INTERVAL_SECS",      2u64),
+            merge_threshold_keys: env_parse("MERGE_THRESHOLD_KEYS", 25_000u64),
+            suspect_secs: env_parse("SUSPECT_SECS", 10u64),
+            dead_secs: env_parse("DEAD_SECS", 30u64),
+            gossip_interval_secs: env_parse("GOSSIP_INTERVAL_SECS", 2u64),
             // Snapshot
-            snapshot_path:          env("SNAPSHOT_PATH", ""),
+            snapshot_path: env("SNAPSHOT_PATH", ""),
             snapshot_interval_secs: env_parse("SNAPSHOT_INTERVAL_SECS", 300u64),
-            entity_ttl_secs:        env_parse("ENTITY_TTL_SECS",        120u64),            api_key:            env("API_KEY",                       ""),
-            key_namespace:      env("KEY_NAMESPACE",              "proxima"),
+            entity_ttl_secs: env_parse("ENTITY_TTL_SECS", 120u64),
+            api_key: env("API_KEY", ""),
+            key_namespace: env("KEY_NAMESPACE", "proxima"),
             redis_cluster_urls: env("REDIS_CLUSTER_URLS", "")
-                .split(',').map(str::trim).filter(|s| !s.is_empty())
-                .map(String::from).collect(),
-            grpc_port:          env_parse("GRPC_PORT",               port + 10),        }
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
+            grpc_port: env_parse("GRPC_PORT", port + 10),
+        }
     }
 }
 
@@ -112,43 +120,46 @@ fn env(key: &str, default: &str) -> String {
 }
 
 fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 // ── Shared application state ───────────────────────────────────────────────
 
 #[derive(Clone)]
 struct AppState {
-    cfg:      Config,
-    ring:     Arc<RwLock<ClusterRing>>,
-    my_info:  Arc<RwLock<NodeInfo>>,
-    redis:    redis::Client,
-    http:     reqwest::Client,
+    cfg: Config,
+    ring: Arc<RwLock<ClusterRing>>,
+    my_info: Arc<RwLock<NodeInfo>>,
+    redis: redis::Client,
+    http: reqwest::Client,
     /// None when SNAPSHOT_PATH is empty (snapshotting disabled)
     snapshot: Option<Arc<snapshot::Snapshot>>,
     /// RedisStore wrapping the same Redis connection.
     /// Used for the lib-level `entities_written_after` delta-sync query.
-    store:    Arc<RedisStore>,
+    store: Arc<RedisStore>,
 }
 
 impl AppState {
     fn new(cfg: Config, redis: redis::Client) -> anyhow::Result<Self> {
-        let now  = unix_now();
+        let now = unix_now();
         let snap = if cfg.snapshot_path.is_empty() {
             None
         } else {
             Some(Arc::new(snapshot::Snapshot::open(&cfg.snapshot_path)?))
         };
         let my = NodeInfo {
-            node_id:        cfg.node_id.clone(),
-            addr:           cfg.http_addr.clone(),
-            redis_url:      cfg.redis_url.clone(),
-            prefix_start:   cfg.prefix_start.clone(),
-            prefix_end:     cfg.prefix_end.clone(),
-            key_count:      0,
-            mem_bytes:      0,
-            generation:     1,
-            status:         if cfg.prefix_start.is_empty() && cfg.prefix_end.is_empty() {
+            node_id: cfg.node_id.clone(),
+            addr: cfg.http_addr.clone(),
+            redis_url: cfg.redis_url.clone(),
+            prefix_start: cfg.prefix_start.clone(),
+            prefix_end: cfg.prefix_end.clone(),
+            key_count: 0,
+            mem_bytes: 0,
+            generation: 1,
+            status: if cfg.prefix_start.is_empty() && cfg.prefix_end.is_empty() {
                 NodeStatus::Standby
             } else {
                 NodeStatus::Active
@@ -158,29 +169,31 @@ impl AppState {
         let mut ring = ClusterRing::default();
         ring.merge(my.clone());
         let store = Arc::new(if cfg.redis_cluster_urls.is_empty() {
-            RedisStore::with_config(
-                cfg.redis_url.as_str(),
-                Metrics::new(),
-                cfg.entity_ttl_secs,
-            ).expect("RedisStore init")
-            .with_namespace(&cfg.key_namespace)
+            RedisStore::with_config(cfg.redis_url.as_str(), Metrics::new(), cfg.entity_ttl_secs)
+                .expect("RedisStore init")
+                .with_namespace(&cfg.key_namespace)
         } else {
-            tracing::info!("Using Redis Cluster mode: {} nodes", cfg.redis_cluster_urls.len());
+            tracing::info!(
+                "Using Redis Cluster mode: {} nodes",
+                cfg.redis_cluster_urls.len()
+            );
             RedisStore::new_cluster(
                 cfg.redis_cluster_urls.clone(),
                 Metrics::new(),
                 cfg.entity_ttl_secs,
-            ).expect("RedisStore cluster init")
+            )
+            .expect("RedisStore cluster init")
             .with_namespace(&cfg.key_namespace)
         });
         Ok(Self {
             cfg,
-            ring:    Arc::new(RwLock::new(ring)),
+            ring: Arc::new(RwLock::new(ring)),
             my_info: Arc::new(RwLock::new(my)),
-            redis:   redis.clone(),
-            http:    reqwest::Client::builder()
+            redis: redis.clone(),
+            http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(3))
-                .build().unwrap(),
+                .build()
+                .unwrap(),
             snapshot: snap,
             store,
         })
@@ -188,7 +201,10 @@ impl AppState {
 }
 
 fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
@@ -200,14 +216,19 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let cfg   = Config::from_env();
+    let cfg = Config::from_env();
     let redis = redis::Client::open(cfg.redis_url.as_str())?;
 
-    info!("Node {} starting — prefix [{}, {}), redis: {}",
-        cfg.node_id, cfg.prefix_start, cfg.prefix_end, cfg.redis_url);
+    info!(
+        "Node {} starting — prefix [{}, {}), redis: {}",
+        cfg.node_id, cfg.prefix_start, cfg.prefix_end, cfg.redis_url
+    );
     info!("Seed peers: {:?}", cfg.seed_peers);
     if !cfg.snapshot_path.is_empty() {
-        info!("Snapshot store: {} (every {}s)", cfg.snapshot_path, cfg.snapshot_interval_secs);
+        info!(
+            "Snapshot store: {} (every {}s)",
+            cfg.snapshot_path, cfg.snapshot_interval_secs
+        );
     }
 
     let state = AppState::new(cfg.clone(), redis)?;
@@ -215,9 +236,9 @@ async fn main() -> Result<()> {
     // ── Restore from snapshot if Redis is empty (e.g. new node after failure)
     if let Some(snap) = &state.snapshot {
         match restore_from_snapshot(&state, snap).await {
-            Ok(true)  => {}
+            Ok(true) => {}
             Ok(false) => info!("No snapshot restore needed (Redis has data or snapshot is empty)"),
-            Err(e)    => tracing::warn!("Snapshot restore failed (continuing cold): {e}"),
+            Err(e) => tracing::warn!("Snapshot restore failed (continuing cold): {e}"),
         }
     }
 
@@ -242,7 +263,7 @@ async fn main() -> Result<()> {
     // ── gRPC server (dedicated port = http_port + 10) ─────────────────────
     {
         let grpc_state = state.clone();
-        let grpc_port  = cfg.grpc_port;
+        let grpc_port = cfg.grpc_port;
         tokio::spawn(async move {
             if let Err(e) = grpc::serve(grpc_state, grpc_port).await {
                 tracing::error!("gRPC server error: {e}");
@@ -253,24 +274,24 @@ async fn main() -> Result<()> {
     // ── HTTP server ───────────────────────────────────────────────────────
     // Write endpoints are protected by optional API-key auth.
     let write_routes = Router::new()
-        .route("/ingest",          post(route_ingest_batch))
+        .route("/ingest", post(route_ingest_batch))
         .route("/ingest-snapshot", post(route_ingest_snapshot))
-        .route("/split",           post(route_trigger_split))
-        .route("/merge",           post(route_trigger_merge))
-        .route("/assign-range",    put(route_assign_range))
+        .route("/split", post(route_trigger_split))
+        .route("/merge", post(route_trigger_merge))
+        .route("/assign-range", put(route_assign_range))
         .route_layer(middleware::from_fn_with_state(state.clone(), api_key_guard));
 
     let app = Router::new()
-        .route("/state",         get(route_get_state))
-        .route("/cluster",       get(route_get_cluster))
-        .route("/health",        get(route_health))
-        .route("/gossip",        post(route_receive_gossip))
-        .route("/probe",         post(route_probe))
-        .route("/metrics",       get(route_metrics))
-        .route("/metrics/prom",  get(route_metrics_prometheus))
-        .route("/trace",         get(route_trace))
-        .route("/delta-sync",    get(route_delta_sync))   // read-only, no auth
-        .route("/entity/:id",    delete(route_delete_entity))
+        .route("/state", get(route_get_state))
+        .route("/cluster", get(route_get_cluster))
+        .route("/health", get(route_health))
+        .route("/gossip", post(route_receive_gossip))
+        .route("/probe", post(route_probe))
+        .route("/metrics", get(route_metrics))
+        .route("/metrics/prom", get(route_metrics_prometheus))
+        .route("/trace", get(route_trace))
+        .route("/delta-sync", get(route_delta_sync)) // read-only, no auth
+        .route("/entity/:id", delete(route_delete_entity))
         .merge(write_routes)
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -293,7 +314,7 @@ async fn prune_loop(state: AppState) {
     loop {
         match state.store.prune_written_at().await {
             Ok(n) if n > 0 => tracing::info!("prune_written_at: removed {} stale entries", n),
-            Ok(_)  => {}
+            Ok(_) => {}
             Err(e) => tracing::warn!("prune_written_at failed: {e}"),
         }
         tokio::time::sleep(interval).await;
@@ -307,7 +328,7 @@ async fn snapshot_loop(state: AppState) {
         tokio::time::sleep(Duration::from_secs(state.cfg.snapshot_interval_secs)).await;
         if let Some(snap) = &state.snapshot {
             match take_snapshot(&state, snap).await {
-                Ok(n)  => tracing::info!("Snapshot: {} entities saved", n),
+                Ok(n) => tracing::info!("Snapshot: {} entities saved", n),
                 Err(e) => tracing::error!("Snapshot failed: {e}"),
             }
         }
@@ -317,21 +338,26 @@ async fn snapshot_loop(state: AppState) {
 /// Scan the local Redis and persist everything to SQLite.
 async fn take_snapshot(state: &AppState, snap: &snapshot::Snapshot) -> anyhow::Result<u64> {
     use redis::AsyncCommands;
-    let mut conn    = state.redis.get_multiplexed_async_connection().await?;
+    let mut conn = state.redis.get_multiplexed_async_connection().await?;
     let mut entries = Vec::new();
-    let mut cursor  = 0u64;
+    let mut cursor = 0u64;
 
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg(state.store.k_entity_pattern()).arg("COUNT").arg(200)
-            .query_async(&mut conn).await?;
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(state.store.k_entity_pattern())
+            .arg("COUNT")
+            .arg(200)
+            .query_async(&mut conn)
+            .await?;
 
         for key in keys {
             if let Ok(Some(json)) = conn.get::<_, Option<String>>(&key).await {
                 if let Ok(entry) = serde_json::from_str::<proxima::GeoEntry>(&json) {
                     let token = cell_token(entry.lat, entry.lon, state.cfg.s2_level);
                     entries.push(snapshot::SnapshotEntry {
-                        id:          entry.id,
+                        id: entry.id,
                         json,
                         token,
                         snapshotted: unix_now() as i64,
@@ -341,7 +367,9 @@ async fn take_snapshot(state: &AppState, snap: &snapshot::Snapshot) -> anyhow::R
         }
 
         cursor = new_cur;
-        if cursor == 0 { break; }
+        if cursor == 0 {
+            break;
+        }
     }
 
     snap.save(entries).await
@@ -351,7 +379,7 @@ async fn take_snapshot(state: &AppState, snap: &snapshot::Snapshot) -> anyhow::R
 /// Returns true if a restore was performed.
 async fn restore_from_snapshot(
     state: &AppState,
-    snap:  &snapshot::Snapshot,
+    snap: &snapshot::Snapshot,
 ) -> anyhow::Result<bool> {
     let snap_count = snap.count().await?;
     if snap_count == 0 {
@@ -367,8 +395,8 @@ async fn restore_from_snapshot(
     }
 
     let entries = snap.load().await?;
-    let now     = unix_now() as i64;
-    let ttl_i   = state.cfg.entity_ttl_secs as i64;
+    let now = unix_now() as i64;
+    let ttl_i = state.cfg.entity_ttl_secs as i64;
 
     // Filter out entries that would have expired under the configured TTL.
     // An entity snapshotted at T with TTL=600s should not be restored if
@@ -380,7 +408,8 @@ async fn restore_from_snapshot(
     if !expired.is_empty() {
         tracing::info!(
             "Snapshot restore: skipping {} expired entries (TTL={}s)",
-            expired.len(), ttl_i
+            expired.len(),
+            ttl_i
         );
     }
 
@@ -389,13 +418,20 @@ async fn restore_from_snapshot(
 
     // Convert SnapshotEntries → GeoEntries and use the lib's merge_entries
     // so the written_at index is maintained on restore too.
-    let geo_entries: Vec<proxima::GeoEntry> = valid.iter()
+    let geo_entries: Vec<proxima::GeoEntry> = valid
+        .iter()
         .filter_map(|e| serde_json::from_str::<proxima::GeoEntry>(&e.json).ok())
         .collect();
-    state.store.merge_entries(&geo_entries, state.cfg.s2_level).await
+    state
+        .store
+        .merge_entries(&geo_entries, state.cfg.s2_level)
+        .await
         .map_err(|e| anyhow::anyhow!("Snapshot restore merge failed: {e}"))?;
 
-    tracing::info!("Snapshot restore complete: {} entities loaded into Redis", n);
+    tracing::info!(
+        "Snapshot restore complete: {} entities loaded into Redis",
+        n
+    );
     Ok(true)
 }
 
@@ -405,7 +441,7 @@ async fn gossip_loop(state: AppState) {
 
         let my_info = state.my_info.read().await.clone();
         let suspect_secs = state.cfg.suspect_secs;
-        let dead_secs    = state.cfg.dead_secs;
+        let dead_secs = state.cfg.dead_secs;
         let peers: Vec<String> = {
             let ring = state.ring.read().await;
             ring.all_nodes()
@@ -414,7 +450,8 @@ async fn gossip_loop(state: AppState) {
                 .map(|n| n.addr.clone())
                 .chain(state.cfg.seed_peers.iter().cloned())
                 .collect::<std::collections::HashSet<_>>()
-                .into_iter().collect()
+                .into_iter()
+                .collect()
         };
 
         // Choose K random peers
@@ -422,7 +459,7 @@ async fn gossip_loop(state: AppState) {
             let mut rng = rand::thread_rng();
             let mut p = peers;
             p.shuffle(&mut rng);
-            p.into_iter().take(2).collect()  // fanout = 2 peers per cycle
+            p.into_iter().take(2).collect() // fanout = 2 peers per cycle
         };
 
         for peer in targets {
@@ -454,9 +491,11 @@ async fn gossip_loop(state: AppState) {
                     let probers: Vec<String> = {
                         let ring = state.ring.read().await;
                         ring.all_nodes()
-                            .filter(|n| n.addr != peer
-                                     && n.node_id != my_info.node_id
-                                     && n.status == NodeStatus::Active)
+                            .filter(|n| {
+                                n.addr != peer
+                                    && n.node_id != my_info.node_id
+                                    && n.status == NodeStatus::Active
+                            })
                             .map(|n| n.addr.clone())
                             .take(2)
                             .collect()
@@ -464,17 +503,20 @@ async fn gossip_loop(state: AppState) {
 
                     let mut reachable_via_proxy = false;
                     for prober in &probers {
-                        if let Ok(resp) = state.http
+                        if let Ok(resp) = state
+                            .http
                             .post(format!("http://{prober}/probe"))
                             .json(&serde_json::json!({ "target": peer }))
                             .timeout(Duration::from_secs(2))
-                            .send().await
+                            .send()
+                            .await
                         {
                             if resp.json::<bool>().await.unwrap_or(false) {
                                 reachable_via_proxy = true;
                                 tracing::debug!(
                                     "Indirect probe: {} is reachable via {}",
-                                    peer, prober
+                                    peer,
+                                    prober
                                 );
                                 break;
                             }
@@ -492,16 +534,17 @@ async fn gossip_loop(state: AppState) {
                                 let age = now.saturating_sub(n.last_seen_secs);
                                 if age > dead_secs && n.status != NodeStatus::Dead {
                                     let mut dead = n.clone();
-                                    dead.status     = NodeStatus::Dead;
+                                    dead.status = NodeStatus::Dead;
                                     dead.generation += 1;
                                     tracing::warn!(
                                         "Node {} marked DEAD ({}s, direct+indirect probes failed)",
-                                        n.node_id, age
+                                        n.node_id,
+                                        age
                                     );
                                     ring.merge(dead);
                                 } else if age > suspect_secs && n.status == NodeStatus::Active {
                                     let mut suspect = n.clone();
-                                    suspect.status     = NodeStatus::Suspect;
+                                    suspect.status = NodeStatus::Suspect;
                                     suspect.generation += 1;
                                     tracing::warn!(
                                         "Node {} marked SUSPECT ({}s, direct+indirect probes failed)",
@@ -527,22 +570,28 @@ async fn metrics_loop(state: AppState) {
         if let Ok(mut conn) = state.redis.get_multiplexed_async_connection().await {
             // Count aircraft keys
             let key_count: u64 = redis::cmd("DBSIZE")
-                .query_async(&mut conn).await.unwrap_or(0);
+                .query_async(&mut conn)
+                .await
+                .unwrap_or(0);
 
             // Get memory usage
-            let info: String = redis::cmd("INFO").arg("memory")
-                .query_async(&mut conn).await.unwrap_or_default();
-            let mem_bytes: u64 = info.lines()
+            let info: String = redis::cmd("INFO")
+                .arg("memory")
+                .query_async(&mut conn)
+                .await
+                .unwrap_or_default();
+            let mem_bytes: u64 = info
+                .lines()
                 .find(|l| l.starts_with("used_memory:"))
                 .and_then(|l| l.split(':').nth(1))
                 .and_then(|v| v.trim().parse().ok())
                 .unwrap_or(0);
 
             let mut my = state.my_info.write().await;
-            my.key_count      = key_count;
-            my.mem_bytes      = mem_bytes;
+            my.key_count = key_count;
+            my.mem_bytes = mem_bytes;
             my.last_seen_secs = unix_now();
-            my.generation    += 1;
+            my.generation += 1;
 
             state.ring.write().await.merge(my.clone());
         }
@@ -595,7 +644,7 @@ async fn route_metrics(State(s): State<AppState>) -> Json<serde_json::Value> {
 /// Receive a gossip push from another node.
 /// Returns our own current state so the caller can merge it too.
 async fn route_receive_gossip(
-    State(s):   State<AppState>,
+    State(s): State<AppState>,
     Json(node): Json<NodeInfo>,
 ) -> Json<NodeInfo> {
     s.ring.write().await.merge(node);
@@ -615,14 +664,13 @@ struct ProbeRequest {
 /// When a node fails its direct gossip to peer P it asks other nodes to probe P.
 /// Returns `true` if this node can reach P, `false` otherwise.
 /// No state is mutated — purely a reachability test for the caller.
-async fn route_probe(
-    State(s):  State<AppState>,
-    Json(req): Json<ProbeRequest>,
-) -> Json<bool> {
-    let reachable = s.http
+async fn route_probe(State(s): State<AppState>, Json(req): Json<ProbeRequest>) -> Json<bool> {
+    let reachable = s
+        .http
         .get(format!("http://{}/health", req.target))
         .timeout(Duration::from_secs(2))
-        .send().await
+        .send()
+        .await
         .map(|r| r.status().is_success())
         .unwrap_or(false);
     Json(reachable)
@@ -640,16 +688,16 @@ struct SplitRequest {
 
 #[derive(Serialize)]
 struct SplitResponse {
-    migrated_keys:  u64,
-    split_point:    String,
+    migrated_keys: u64,
+    split_point: String,
     new_prefix_end: String,
 }
 
 /// POST /split  — migrates keys >= split_point to the target node,
 /// then updates both nodes' prefix ranges via gossip.
 async fn route_trigger_split(
-    State(s):   State<AppState>,
-    Json(req):  Json<SplitRequest>,
+    State(s): State<AppState>,
+    Json(req): Json<SplitRequest>,
 ) -> Result<Json<SplitResponse>, (StatusCode, String)> {
     let err = |e: anyhow::Error| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
 
@@ -664,20 +712,22 @@ async fn route_trigger_split(
     // Mark ourselves as splitting so readers know to check both nodes
     {
         let mut my = s.my_info.write().await;
-        my.status     = NodeStatus::Splitting;
+        my.status = NodeStatus::Splitting;
         my.generation += 1;
         s.ring.write().await.merge(my.clone());
     }
 
-    let migrated = migrate_keys(&s, &req.target, &split_point).await.map_err(err)?;
+    let migrated = migrate_keys(&s, &req.target, &split_point)
+        .await
+        .map_err(err)?;
 
     let old_end = s.my_info.read().await.prefix_end.clone();
 
     // Update our own range: we now own [prefix_start, split_point)
     {
         let mut my = s.my_info.write().await;
-        my.prefix_end  = split_point.clone();
-        my.status      = NodeStatus::Active;
+        my.prefix_end = split_point.clone();
+        my.status = NodeStatus::Active;
         my.generation += 1;
         s.ring.write().await.merge(my.clone());
     }
@@ -693,17 +743,22 @@ async fn route_trigger_split(
     s.http
         .put(format!("http://{}/assign-range", req.target))
         .json(&AssignRangeRequest {
-            prefix_start:       split_point.clone(),
-            prefix_end:         old_end.clone(),
-            source_addr:        Some(s.cfg.http_addr.clone()),
+            prefix_start: split_point.clone(),
+            prefix_end: old_end.clone(),
+            source_addr: Some(s.cfg.http_addr.clone()),
             snapshot_timestamp: Some(snapshot_ts),
         })
-        .send().await.map_err(|e| err(e.into()))?;
+        .send()
+        .await
+        .map_err(|e| err(e.into()))?;
 
-    info!("Split complete: migrated {} keys to {}", migrated, req.target);
+    info!(
+        "Split complete: migrated {} keys to {}",
+        migrated, req.target
+    );
 
     Ok(Json(SplitResponse {
-        migrated_keys:  migrated,
+        migrated_keys: migrated,
         split_point,
         new_prefix_end: old_end,
     }))
@@ -726,8 +781,8 @@ struct MergeRequest {
 ///   4. Extend this shard's prefix range to cover the target's range too.
 ///   5. Tell the target to reset to Standby (empty prefix range).
 async fn route_trigger_merge(
-    State(s):   State<AppState>,
-    Json(req):  Json<MergeRequest>,
+    State(s): State<AppState>,
+    Json(req): Json<MergeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let err = |e: anyhow::Error| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
     let target = req.absorb.trim_start_matches("http://").to_string();
@@ -737,55 +792,68 @@ async fn route_trigger_merge(
     // 1. Mark self as Merging
     {
         let mut my = s.my_info.write().await;
-        my.status     = NodeStatus::Merging;
+        my.status = NodeStatus::Merging;
         my.generation += 1;
         s.ring.write().await.merge(my.clone());
     }
 
     // 2. Fetch all entities from target (since_ms=0 → everything)
-    let delta_url  = format!("http://{target}/delta-sync?since_ms=0");
-    let entities: Vec<GeoEntry> = s.http
+    let delta_url = format!("http://{target}/delta-sync?since_ms=0");
+    let entities: Vec<GeoEntry> = s
+        .http
         .get(&delta_url)
         .timeout(Duration::from_secs(30))
-        .send().await.map_err(|e| err(e.into()))?
-        .json().await.map_err(|e| err(e.into()))?;
+        .send()
+        .await
+        .map_err(|e| err(e.into()))?
+        .json()
+        .await
+        .map_err(|e| err(e.into()))?;
 
     let n = entities.len();
     info!("Absorbing {} entities from {}", n, target);
 
     // 3. Merge into this shard using the lib's freshness-ordered primitive
-    s.store.merge_entries(&entities, s.cfg.s2_level).await.map_err(|e| err(e.into()))?;
+    s.store
+        .merge_entries(&entities, s.cfg.s2_level)
+        .await
+        .map_err(|e| err(e.into()))?;
 
     let target_prefix_end = {
         // Collect first so the RwLockReadGuard can be dropped cleanly
         let all: Vec<NodeInfo> = s.ring.read().await.as_vec();
         all.into_iter()
-            .find(|n| n.addr.trim_start_matches("http://") == target.as_str()
-                   || n.addr == target)
+            .find(|n| n.addr.trim_start_matches("http://") == target.as_str() || n.addr == target)
             .map(|n| n.prefix_end)
             .unwrap_or_default()
     };
 
     {
         let mut my = s.my_info.write().await;
-        my.prefix_end  = target_prefix_end.clone();
-        my.status      = NodeStatus::Active;
+        my.prefix_end = target_prefix_end.clone();
+        my.status = NodeStatus::Active;
         my.generation += 1;
         s.ring.write().await.merge(my.clone());
     }
 
-    info!("Merged range now [{}, {})", s.my_info.read().await.prefix_start, target_prefix_end);
+    info!(
+        "Merged range now [{}, {})",
+        s.my_info.read().await.prefix_start,
+        target_prefix_end
+    );
 
     // 5. Reset target to Standby (empty prefix = no responsibility)
-    let _ = s.http
+    let _ = s
+        .http
         .put(format!("http://{target}/assign-range"))
         .json(&AssignRangeRequest {
-            prefix_start:       String::new(),
-            prefix_end:         String::new(),
-            source_addr:        None,
+            prefix_start: String::new(),
+            prefix_end: String::new(),
+            source_addr: None,
             snapshot_timestamp: None,
         })
-        .send().await;
+        .send()
+        .await;
 
     info!("Merge complete: absorbed {n} entities, target {target} reset to Standby");
 
@@ -803,8 +871,13 @@ async fn find_median_split(s: &AppState) -> Result<String> {
 
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg(s.store.k_entity_pattern()).arg("COUNT").arg(200)
-            .query_async(&mut conn).await?;
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(s.store.k_entity_pattern())
+            .arg("COUNT")
+            .arg(200)
+            .query_async(&mut conn)
+            .await?;
 
         for key in keys {
             if let Ok(Some(json)) = conn.get::<_, Option<String>>(&key).await {
@@ -818,7 +891,9 @@ async fn find_median_split(s: &AppState) -> Result<String> {
         }
 
         cursor = new_cur;
-        if cursor == 0 { break; }
+        if cursor == 0 {
+            break;
+        }
     }
 
     let total: u64 = prefix_counts.values().sum();
@@ -852,8 +927,13 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
 
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg(s.store.k_entity_pattern()).arg("COUNT").arg(200)
-            .query_async(&mut conn).await?;
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(s.store.k_entity_pattern())
+            .arg("COUNT")
+            .arg(200)
+            .query_async(&mut conn)
+            .await?;
 
         for key in keys {
             if let Ok(Some(json)) = conn.get::<_, Option<String>>(&key).await {
@@ -867,11 +947,16 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
         }
 
         cursor = new_cur;
-        if cursor == 0 { break; }
+        if cursor == 0 {
+            break;
+        }
     }
 
     let total = to_migrate.len() as u64;
-    info!("Split: collected {} entities to migrate to {}", total, target);
+    info!(
+        "Split: collected {} entities to migrate to {}",
+        total, target
+    );
 
     // ── Phase 2: For each chunk — build snapshot entries, deliver to target,
     //             then delete from source only after confirmed persistence.
@@ -880,25 +965,29 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
     //   If the target crashes after acknowledging, it can self-restore from
     //   its snapshot on restart — no re-split required.
     for chunk in to_migrate.chunks(100) {
-        let snap_entries: Vec<snapshot::SnapshotEntry> = chunk.iter()
+        let snap_entries: Vec<snapshot::SnapshotEntry> = chunk
+            .iter()
             .map(|(_, entry)| snapshot::SnapshotEntry {
-                id:          entry.id.clone(),
-                json:        serde_json::to_string(entry).unwrap_or_default(),
-                token:       cell_token(entry.lat, entry.lon, s.cfg.s2_level),
+                id: entry.id.clone(),
+                json: serde_json::to_string(entry).unwrap_or_default(),
+                token: cell_token(entry.lat, entry.lon, s.cfg.s2_level),
                 snapshotted: unix_now() as i64,
             })
             .collect();
 
         // Prefer /ingest-snapshot; fall back to /ingest for older nodes.
-        let resp = s.http
+        let resp = s
+            .http
             .post(format!("http://{target}/ingest-snapshot"))
             .json(&snap_entries)
-            .send().await?;
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             anyhow::bail!(
                 "Target {} rejected /ingest-snapshot ({}); split aborted — source keys intact",
-                target, resp.status()
+                target,
+                resp.status()
             );
         }
 
@@ -912,8 +1001,13 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
     cursor = 0;
     loop {
         let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor).arg("MATCH").arg(s.store.k_cell_pattern()).arg("COUNT").arg(200)
-            .query_async(&mut conn).await?;
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(s.store.k_cell_pattern())
+            .arg("COUNT")
+            .arg(200)
+            .query_async(&mut conn)
+            .await?;
 
         for key in &keys {
             let kp = format!("{{{}}}:cell:", s.store.key_prefix());
@@ -921,16 +1015,23 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
             if token >= split_point {
                 let members: Vec<String> = conn.smembers(key).await?;
                 if !members.is_empty() {
-                    s.http.post(format!("http://{target}/ingest-cell"))
-                        .json(&IngestCellRequest { token: token.to_string(), ids: members })
-                        .send().await?;
+                    s.http
+                        .post(format!("http://{target}/ingest-cell"))
+                        .json(&IngestCellRequest {
+                            token: token.to_string(),
+                            ids: members,
+                        })
+                        .send()
+                        .await?;
                 }
                 conn.del::<_, ()>(key).await?;
             }
         }
 
         cursor = new_cur;
-        if cursor == 0 { break; }
+        if cursor == 0 {
+            break;
+        }
     }
 
     Ok(total)
@@ -940,9 +1041,11 @@ async fn migrate_keys(s: &AppState, target: &str, split_point: &str) -> Result<u
 /// /ingest-snapshot. New splits exclusively use /ingest-snapshot.
 #[allow(dead_code)]
 async fn post_ingest(s: &AppState, target: &str, entries: Vec<GeoEntry>) -> Result<()> {
-    s.http.post(format!("http://{target}/ingest"))
+    s.http
+        .post(format!("http://{target}/ingest"))
         .json(&entries)
-        .send().await?;
+        .send()
+        .await?;
     Ok(())
 }
 
@@ -954,7 +1057,7 @@ async fn post_ingest(s: &AppState, target: &str, entries: Vec<GeoEntry>) -> Resu
 // immediately — no TTL dependency.
 
 async fn route_ingest_batch(
-    State(s):      State<AppState>,
+    State(s): State<AppState>,
     Json(entries): Json<Vec<GeoEntry>>,
 ) -> StatusCode {
     use redis::AsyncCommands;
@@ -974,8 +1077,10 @@ async fn route_ingest_batch(
     };
 
     let ttl = s.cfg.entity_ttl_secs;
-    let now_ms   = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
     let written_at_key = s.store.k_written_at();
 
     // Snapshot this node's range once (avoid repeated lock acquisitions).
@@ -988,37 +1093,48 @@ async fn route_ingest_batch(
         let new_token = cell_token(entry.lat, entry.lon, s.cfg.s2_level);
 
         let in_range = (pfx_start.is_empty() || new_token.as_str() >= pfx_start.as_str())
-                    && (pfx_end.is_empty()   || new_token.as_str() <  pfx_end.as_str());
+            && (pfx_end.is_empty() || new_token.as_str() < pfx_end.as_str());
         if !in_range {
             tracing::warn!(
                 "Rejecting entity {} (token {}) — not in my range [{}, {})",
-                entry.id, new_token, pfx_start, pfx_end
+                entry.id,
+                new_token,
+                pfx_start,
+                pfx_end
             );
             return StatusCode::CONFLICT;
         }
 
-        if entry.written_at == 0 { entry.written_at = now_ms; }
+        if entry.written_at == 0 {
+            entry.written_at = now_ms;
+        }
 
-        let ak      = s.store.k_entity(&entry.id);
-        let new_ck  = s.store.k_cell(&new_token);
+        let ak = s.store.k_entity(&entry.id);
+        let new_ck = s.store.k_cell(&new_token);
         let loc_key = s.store.k_location(&entry.id);
-        let json    = serde_json::to_string(&entry).unwrap_or_default();
+        let json = serde_json::to_string(&entry).unwrap_or_default();
 
         if let Ok(Some(old_token)) = conn.get::<_, Option<String>>(&loc_key).await {
             if old_token != new_token {
                 let old_ck = s.store.k_cell(&old_token);
                 let _: () = conn.srem(&old_ck, &entry.id).await.unwrap_or(());
                 let remaining: u64 = conn.scard(&old_ck).await.unwrap_or(1);
-                if remaining == 0 { let _: () = conn.del(&old_ck).await.unwrap_or(()); }
+                if remaining == 0 {
+                    let _: () = conn.del(&old_ck).await.unwrap_or(());
+                }
                 tracing::debug!("Entity {} moved: cell {old_token} → {new_token}", entry.id);
             }
         }
 
         let mut pipe = redis::pipe();
-        pipe.set_ex(&ak,           &json,     ttl).ignore()
-            .sadd(&new_ck,         &entry.id).ignore()
-            .set_ex(&loc_key,      &new_token, ttl).ignore()
-            .zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64).ignore();
+        pipe.set_ex(&ak, &json, ttl)
+            .ignore()
+            .sadd(&new_ck, &entry.id)
+            .ignore()
+            .set_ex(&loc_key, &new_token, ttl)
+            .ignore()
+            .zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64)
+            .ignore();
         let _: () = pipe.query_async(&mut conn).await.unwrap_or(());
     }
 
@@ -1028,13 +1144,13 @@ async fn route_ingest_batch(
 #[derive(Deserialize, Serialize)]
 struct IngestCellRequest {
     token: String,
-    ids:   Vec<String>,
+    ids: Vec<String>,
 }
 
 // Route exists for cell index migration — just add to the cell set
 #[allow(dead_code)]
 async fn route_ingest_cell(
-    State(s):  State<AppState>,
+    State(s): State<AppState>,
     Json(req): Json<IngestCellRequest>,
 ) -> StatusCode {
     if let Ok(mut conn) = s.redis.get_multiplexed_async_connection().await {
@@ -1065,7 +1181,7 @@ async fn route_ingest_cell(
 /// Falls back gracefully if snapshotting is disabled (`SNAPSHOT_PATH` not
 /// set): entries are still written to Redis directly.
 async fn route_ingest_snapshot(
-    State(s):      State<AppState>,
+    State(s): State<AppState>,
     Json(entries): Json<Vec<snapshot::SnapshotEntry>>,
 ) -> StatusCode {
     let n = entries.len();
@@ -1073,12 +1189,20 @@ async fn route_ingest_snapshot(
 
     // 1. Persist to SQLite snapshot (durable write-ahead)
     if let Some(snap) = &s.snapshot {
-        if let Err(e) = snap.append(entries.iter().map(|e| snapshot::SnapshotEntry {
-            id:          e.id.clone(),
-            json:        e.json.clone(),
-            token:       e.token.clone(),
-            snapshotted: e.snapshotted,
-        }).collect()).await {
+        if let Err(e) = snap
+            .append(
+                entries
+                    .iter()
+                    .map(|e| snapshot::SnapshotEntry {
+                        id: e.id.clone(),
+                        json: e.json.clone(),
+                        token: e.token.clone(),
+                        snapshotted: e.snapshotted,
+                    })
+                    .collect(),
+            )
+            .await
+        {
             tracing::error!("Snapshot append failed during split ingest: {e}");
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
@@ -1087,7 +1211,8 @@ async fn route_ingest_snapshot(
     // 2. Merge into Redis using the lib's freshness-ordered primitive.
     //    This is the same path used for delta-sync catch-up — idempotent
     //    and safe to retry.
-    let geo_entries: Vec<proxima::GeoEntry> = entries.iter()
+    let geo_entries: Vec<proxima::GeoEntry> = entries
+        .iter()
         .filter_map(|e| serde_json::from_str::<proxima::GeoEntry>(&e.json).ok())
         .collect();
     if let Err(e) = s.store.merge_entries(&geo_entries, s.cfg.s2_level).await {
@@ -1095,7 +1220,10 @@ async fn route_ingest_snapshot(
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
 
-    tracing::info!("ingest-snapshot: {} entities written to snapshot + Redis", n);
+    tracing::info!(
+        "ingest-snapshot: {} entities written to snapshot + Redis",
+        n
+    );
     StatusCode::OK
 }
 
@@ -1121,11 +1249,18 @@ async fn route_delta_sync(
         let my = s.my_info.read().await;
         (my.prefix_start.clone(), my.prefix_end.clone())
     };
-    match s.store.entities_written_after(p.since_ms, &prefix_start, &prefix_end).await {
+    match s
+        .store
+        .entities_written_after(p.since_ms, &prefix_start, &prefix_end)
+        .await
+    {
         Ok(entries) => {
             tracing::info!(
                 "delta-sync: {} entities written after {}ms in [{}, {})",
-                entries.len(), p.since_ms, prefix_start, prefix_end
+                entries.len(),
+                p.since_ms,
+                prefix_start,
+                prefix_end
             );
             Json(entries)
         }
@@ -1140,10 +1275,10 @@ async fn route_delta_sync(
 
 #[derive(Deserialize, Serialize)]
 struct AssignRangeRequest {
-    prefix_start:       String,
-    prefix_end:         String,
+    prefix_start: String,
+    prefix_end: String,
     /// HTTP address of the source shard — used for delta-sync catch-up.
-    source_addr:        Option<String>,
+    source_addr: Option<String>,
     /// Unix ms timestamp of the snapshot seed. Bounds the delta-sync query.
     snapshot_timestamp: Option<u64>,
 }
@@ -1155,7 +1290,7 @@ struct AssignRangeRequest {
 ///   2. Applies each with a freshness check (`written_at` comparison)
 ///   3. Transitions to `Active` and gossips the new status
 async fn route_assign_range(
-    State(s):  State<AppState>,
+    State(s): State<AppState>,
     Json(req): Json<AssignRangeRequest>,
 ) -> StatusCode {
     // Empty prefix_start + prefix_end = release this shard back to Standby.
@@ -1172,9 +1307,9 @@ async fn route_assign_range(
         }
         let mut my = s.my_info.write().await;
         my.prefix_start = String::new();
-        my.prefix_end   = String::new();
-        my.status       = NodeStatus::Standby;
-        my.generation  += 1;
+        my.prefix_end = String::new();
+        my.status = NodeStatus::Standby;
+        my.generation += 1;
         s.ring.write().await.merge(my.clone());
         return StatusCode::OK;
     }
@@ -1187,7 +1322,7 @@ async fn route_assign_range(
     // if this node crashes before transitioning to Active.
     {
         let lock_key = s.store.k_range_claim(&req.prefix_start);
-        let node_id  = s.cfg.node_id.clone();
+        let node_id = s.cfg.node_id.clone();
         match s.redis.get_multiplexed_async_connection().await {
             Ok(mut conn) => {
                 let result: Option<String> = redis::cmd("SET")
@@ -1196,7 +1331,8 @@ async fn route_assign_range(
                     .arg("NX")
                     .arg("EX")
                     .arg(120u64)
-                    .query_async(&mut conn).await
+                    .query_async(&mut conn)
+                    .await
                     .unwrap_or(None);
                 if result.is_none() {
                     // Lock exists — check whether this node already holds it
@@ -1205,7 +1341,8 @@ async fn route_assign_range(
                     if holder != node_id {
                         tracing::warn!(
                             "Range claim conflict: prefix {} already claimed by {}",
-                            req.prefix_start, holder
+                            req.prefix_start,
+                            holder
                         );
                         return StatusCode::CONFLICT;
                     }
@@ -1218,15 +1355,16 @@ async fn route_assign_range(
 
     info!(
         "Assigned range [{}, {}); bootstrapping from {}",
-        req.prefix_start, req.prefix_end,
+        req.prefix_start,
+        req.prefix_end,
         req.source_addr.as_deref().unwrap_or("unknown")
     );
     {
         let mut my = s.my_info.write().await;
         my.prefix_start = req.prefix_start.clone();
-        my.prefix_end   = req.prefix_end.clone();
-        my.status       = NodeStatus::Bootstrapping;   // not yet ready for writes
-        my.generation  += 1;
+        my.prefix_end = req.prefix_end.clone();
+        my.status = NodeStatus::Bootstrapping; // not yet ready for writes
+        my.generation += 1;
         s.ring.write().await.merge(my.clone());
     }
 
@@ -1245,11 +1383,11 @@ async fn route_assign_range(
 
 /// Background task: delta-sync catch-up then go Active.
 async fn bootstrap_delta_sync(
-    s:            AppState,
-    source_addr:  Option<String>,
+    s: AppState,
+    source_addr: Option<String>,
     prefix_start: String,
-    prefix_end:   String,
-    since_ms:     u64,
+    prefix_end: String,
+    since_ms: u64,
 ) {
     tokio::time::sleep(Duration::from_secs(3)).await; // let /ingest-snapshot settle
 
@@ -1263,14 +1401,19 @@ async fn bootstrap_delta_sync(
                     tracing::info!("Bootstrap: received {} delta entries", delta.len());
                     let now_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default().as_millis() as u64;
+                        .unwrap_or_default()
+                        .as_millis() as u64;
                     for e in &mut delta {
-                        if e.written_at == 0 { e.written_at = now_ms; }
+                        if e.written_at == 0 {
+                            e.written_at = now_ms;
+                        }
                     }
                     // store.merge_entries applies the freshness check — only
                     // entries newer than what's already in this shard are written.
                     match s.store.merge_entries(&delta, s.cfg.s2_level).await {
-                        Ok(n) => tracing::info!("Bootstrap: applied {n}/{} delta entries", delta.len()),
+                        Ok(n) => {
+                            tracing::info!("Bootstrap: applied {n}/{} delta entries", delta.len())
+                        }
                         Err(e) => tracing::warn!("Bootstrap: merge_entries failed: {e}"),
                     }
                 }
@@ -1281,10 +1424,13 @@ async fn bootstrap_delta_sync(
     }
 
     let mut my = s.my_info.write().await;
-    my.status     = NodeStatus::Active;
+    my.status = NodeStatus::Active;
     my.generation += 1;
     s.ring.write().await.merge(my.clone());
-    info!("Bootstrap complete — node [{}, {}) is Active", prefix_start, prefix_end);
+    info!(
+        "Bootstrap complete — node [{}, {}) is Active",
+        prefix_start, prefix_end
+    );
 
     // Release the range-claim lock now that we are Active — the lock's purpose
     // was to prevent a second node from stealing the same range during bootstrap.
@@ -1311,15 +1457,15 @@ async fn bootstrap_delta_sync(
 
 #[derive(serde::Deserialize)]
 struct DeleteEntityParams {
-    token: Option<String>,   // known S2 token for targeted SREM (faster)
+    token: Option<String>, // known S2 token for targeted SREM (faster)
 }
 
 /// DELETE /entity/:id?token=... — removes an entity from this shard's Redis immediately.
 /// Used for explicit cross-shard cleanup when TTL-based expiry is too slow.
 async fn route_delete_entity(
-    State(s):  State<AppState>,
-    Path(id):  Path<String>,
-    Query(p):  Query<DeleteEntityParams>,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Query(p): Query<DeleteEntityParams>,
 ) -> StatusCode {
     use redis::AsyncCommands;
     let Ok(mut conn) = s.redis.get_multiplexed_async_connection().await else {
@@ -1327,7 +1473,7 @@ async fn route_delete_entity(
     };
 
     let entity_key = s.store.k_entity(id.as_str());
-    let loc_key    = s.store.k_location(id.as_str());
+    let loc_key = s.store.k_location(id.as_str());
 
     if let Some(token) = p.token {
         let cell_key = s.store.k_cell(&token);
@@ -1341,13 +1487,21 @@ async fn route_delete_entity(
         let mut cursor = 0u64;
         loop {
             let (new_cur, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-                .arg(cursor).arg("MATCH").arg(s.store.k_cell_pattern()).arg("COUNT").arg(200)
-                .query_async(&mut conn).await.unwrap_or((0, vec![]));
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(s.store.k_cell_pattern())
+                .arg("COUNT")
+                .arg(200)
+                .query_async(&mut conn)
+                .await
+                .unwrap_or((0, vec![]));
             for key in keys {
                 let _: () = conn.srem(&key, &id).await.unwrap_or(());
             }
             cursor = new_cur;
-            if cursor == 0 { break; }
+            if cursor == 0 {
+                break;
+            }
         }
         tracing::info!("Deleted entity {id} (slow-path scan)");
     }
@@ -1367,46 +1521,50 @@ struct TraceParams {
 
 #[derive(Serialize)]
 struct TraceResponse {
-    lat:                 f64,
-    lon:                 f64,
-    s2_level:            u8,
-    s2_token:            String,
-    token_prefix_2:      String,
+    lat: f64,
+    lon: f64,
+    s2_level: u8,
+    s2_token: String,
+    token_prefix_2: String,
     /// Which node the cluster ring says should own this token
-    owning_node_id:      String,
+    owning_node_id: String,
     owning_prefix_range: String,
     /// This node — proves request was answered by the right shard
-    served_by:           String,
+    served_by: String,
     /// true only when this node is the correct owner
-    is_local:            bool,
-    all_shards:          Vec<ShardEntry>,
+    is_local: bool,
+    all_shards: Vec<ShardEntry>,
 }
 
 #[derive(Serialize)]
 struct ShardEntry {
-    node_id:      String,
+    node_id: String,
     prefix_range: String,
-    owns_token:   bool,
-    status:       String,
+    owns_token: bool,
+    status: String,
 }
 
 // ── API key guard ─────────────────────────────────────────────────────────
 
 async fn api_key_guard(
     State(s): State<AppState>,
-    req:      axum::extract::Request,
-    next:     Next,
+    req: axum::extract::Request,
+    next: Next,
 ) -> Result<axum::response::Response, StatusCode> {
-    if s.cfg.api_key.is_empty() { return Ok(next.run(req).await); }
-    let provided = req.headers()
-        .get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or("");
+    if s.cfg.api_key.is_empty() {
+        return Ok(next.run(req).await);
+    }
+    let provided = req
+        .headers()
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     // Constant-time comparison prevents timing-oracle key enumeration.
-    let valid: bool = subtle::ConstantTimeEq::ct_eq(
-        s.cfg.api_key.as_bytes(),
-        provided.as_bytes(),
-    ).into();
-    if valid { Ok(next.run(req).await) }
-    else {
+    let valid: bool =
+        subtle::ConstantTimeEq::ct_eq(s.cfg.api_key.as_bytes(), provided.as_bytes()).into();
+    if valid {
+        Ok(next.run(req).await)
+    } else {
         tracing::warn!("Rejected: missing or invalid X-API-Key");
         Err(StatusCode::UNAUTHORIZED)
     }
@@ -1422,7 +1580,7 @@ async fn route_metrics_prometheus(State(s): State<AppState>) -> (HeaderMap, Stri
         None
     };
 
-    let node   = &my.node_id;
+    let node = &my.node_id;
     let prefix = format!("[{}, {})", my.prefix_start, my.prefix_end);
 
     let mut out = format!(
@@ -1445,8 +1603,10 @@ async fn route_metrics_prometheus(State(s): State<AppState>) -> (HeaderMap, Stri
         ));
     }
     let mut headers = HeaderMap::new();
-    headers.insert("content-type",
-        HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"));
+    headers.insert(
+        "content-type",
+        HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+    );
     (headers, out)
 }
 
@@ -1456,71 +1616,102 @@ async fn route_trace(
     State(s): State<AppState>,
     Query(p): Query<TraceParams>,
 ) -> (HeaderMap, Json<TraceResponse>) {
-    let token  = cell_token(p.lat, p.lon, s.cfg.s2_level);
+    let token = cell_token(p.lat, p.lon, s.cfg.s2_level);
     let prefix = token.chars().take(2).collect::<String>();
 
     let ring = s.ring.read().await;
-    let my   = s.my_info.read().await;
+    let my = s.my_info.read().await;
 
     let (owning_id, owning_range) = ring
         .route(&token)
-        .map(|n| (
-            n.node_id.clone(),
-            format!("[{}, {})", n.prefix_start, n.prefix_end),
-        ))
+        .map(|n| {
+            (
+                n.node_id.clone(),
+                format!("[{}, {})", n.prefix_start, n.prefix_end),
+            )
+        })
         .unwrap_or_else(|| ("unowned".into(), "—".into()));
 
     let is_local = my.owns(&token);
 
-    let shards: Vec<ShardEntry> = ring.all_nodes().map(|n| ShardEntry {
-        node_id:      n.node_id.clone(),
-        prefix_range: format!("[{}, {})", n.prefix_start, n.prefix_end),
-        owns_token:   n.owns(&token),
-        status:       format!("{:?}", n.status),
-    }).collect();
+    let shards: Vec<ShardEntry> = ring
+        .all_nodes()
+        .map(|n| ShardEntry {
+            node_id: n.node_id.clone(),
+            prefix_range: format!("[{}, {})", n.prefix_start, n.prefix_end),
+            owns_token: n.owns(&token),
+            status: format!("{:?}", n.status),
+        })
+        .collect();
 
     let mut headers = HeaderMap::new();
-    headers.insert("x-served-by",      HeaderValue::from_str(&s.cfg.node_id).unwrap());
-    headers.insert("x-owning-node",     HeaderValue::from_str(&owning_id).unwrap());
-    headers.insert("x-s2-token",        HeaderValue::from_str(&token).unwrap());
-    headers.insert("x-is-local",        HeaderValue::from_static(if is_local { "true" } else { "false" }));
+    headers.insert(
+        "x-served-by",
+        HeaderValue::from_str(&s.cfg.node_id).unwrap(),
+    );
+    headers.insert("x-owning-node", HeaderValue::from_str(&owning_id).unwrap());
+    headers.insert("x-s2-token", HeaderValue::from_str(&token).unwrap());
+    headers.insert(
+        "x-is-local",
+        HeaderValue::from_static(if is_local { "true" } else { "false" }),
+    );
 
-    (headers, Json(TraceResponse {
-        lat:                 p.lat,
-        lon:                 p.lon,
-        s2_level:            s.cfg.s2_level,
-        s2_token:            token,
-        token_prefix_2:      prefix,
-        owning_node_id:      owning_id,
-        owning_prefix_range: owning_range,
-        served_by:           s.cfg.node_id.clone(),
-        is_local,
-        all_shards:          shards,
-    }))
+    (
+        headers,
+        Json(TraceResponse {
+            lat: p.lat,
+            lon: p.lon,
+            s2_level: s.cfg.s2_level,
+            s2_token: token,
+            token_prefix_2: prefix,
+            owning_node_id: owning_id,
+            owning_prefix_range: owning_range,
+            served_by: s.cfg.node_id.clone(),
+            is_local,
+            all_shards: shards,
+        }),
+    )
 }
 
 // ── S2 helper ─────────────────────────────────────────────────────────────
 
 pub(crate) fn cell_token(lat: f64, lon: f64, level: u8) -> String {
     use s2::{cellid::CellID, latlng::LatLng, s1};
-    let ll   = LatLng::new(s1::Deg(lat).into(), s1::Deg(lon).into());
+    let ll = LatLng::new(s1::Deg(lat).into(), s1::Deg(lon).into());
     let cell = CellID::from(ll).parent(level as u64);
-    let hex  = format!("{:016x}", cell.0);
+    let hex = format!("{:016x}", cell.0);
     hex.trim_end_matches('0').to_string()
 }
-pub(crate) fn viewport_tokens(south: f64, west: f64, north: f64, east: f64, level: u8) -> Vec<String> {
-    use std::f64::consts::PI;
+pub(crate) fn viewport_tokens(
+    south: f64,
+    west: f64,
+    north: f64,
+    east: f64,
+    level: u8,
+) -> Vec<String> {
     use s2::{cap::Cap, latlng::LatLng, point::Point, region::RegionCoverer, s1};
+    use std::f64::consts::PI;
     let clat = (south + north) / 2.0;
-    let clon = (west  + east)  / 2.0;
+    let clon = (west + east) / 2.0;
     let dlat = (north - south).abs() / 2.0;
-    let dlon = (east  - west).abs()  / 2.0;
-    let rad  = ((dlat * dlat + dlon * dlon).sqrt() * PI / 180.0).min(PI);
-    let center   = Point::from(LatLng::new(s1::Deg(clat).into(), s1::Deg(clon).into()));
+    let dlon = (east - west).abs() / 2.0;
+    let rad = ((dlat * dlat + dlon * dlon).sqrt() * PI / 180.0).min(PI);
+    let center = Point::from(LatLng::new(s1::Deg(clat).into(), s1::Deg(clon).into()));
     let angle: s1::angle::Angle = s1::Rad(rad).into();
-    let cap      = Cap::from_center_angle(&center, &angle);
-    let coverer  = RegionCoverer { min_level: level, max_level: level, level_mod: 1, max_cells: 500 };
-    coverer.covering(&cap).0.iter()
-        .map(|c| { let h = format!("{:016x}", c.0); h.trim_end_matches('0').to_string() })
+    let cap = Cap::from_center_angle(&center, &angle);
+    let coverer = RegionCoverer {
+        min_level: level,
+        max_level: level,
+        level_mod: 1,
+        max_cells: 500,
+    };
+    coverer
+        .covering(&cap)
+        .0
+        .iter()
+        .map(|c| {
+            let h = format!("{:016x}", c.0);
+            h.trim_end_matches('0').to_string()
+        })
         .collect()
 }

@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
 use rusqlite::{params, Connection};
 use serde::Serialize;
+use std::sync::{Arc, Mutex};
 
 const SCHEMA: &str = r#"
 PRAGMA journal_mode=WAL;
@@ -33,32 +33,32 @@ ON obs_history(station_id, recorded_at DESC);
 "#;
 
 pub struct StationData {
-    pub id:        String,
-    pub lat:       f64,
-    pub lon:       f64,
-    pub name:      String,
-    pub temp_c:    Option<f64>,
-    pub dewp_c:    Option<f64>,
-    pub wdir:      Option<u16>,
-    pub wspd_kt:   Option<f64>,
+    pub id: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub name: String,
+    pub temp_c: Option<f64>,
+    pub dewp_c: Option<f64>,
+    pub wdir: Option<u16>,
+    pub wspd_kt: Option<f64>,
     pub wx_string: String,
-    pub clouds:    String,
-    pub flt_cat:   String,
+    pub clouds: String,
+    pub flt_cat: String,
 }
 
 #[derive(Serialize)]
 pub struct StationDetail {
-    pub id:        String,
-    pub name:      String,
-    pub temp_c:    Option<f64>,
-    pub dewp_c:    Option<f64>,
-    pub wdir:      Option<u16>,
-    pub wspd_kt:   Option<f64>,
+    pub id: String,
+    pub name: String,
+    pub temp_c: Option<f64>,
+    pub dewp_c: Option<f64>,
+    pub wdir: Option<u16>,
+    pub wspd_kt: Option<f64>,
     pub wx_string: String,
-    pub clouds:    String,
-    pub flt_cat:   String,
+    pub clouds: String,
+    pub flt_cat: String,
     /// Last 3 observations [lat, lon], oldest first (always same point for fixed stations).
-    pub history:   Vec<[f64; 2]>,
+    pub history: Vec<[f64; 2]>,
 }
 
 #[derive(Clone)]
@@ -71,7 +71,9 @@ impl Db {
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
         tracing::info!("SQLite opened at {path}");
-        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 
     pub async fn upsert_batch(&self, stations: Vec<StationData>) -> anyhow::Result<()> {
@@ -115,10 +117,18 @@ impl Db {
     pub async fn prune_history(&self) -> anyhow::Result<()> {
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let guard = conn.lock().map_err(|_| anyhow::anyhow!("db mutex poisoned"))?;
+            let guard = conn
+                .lock()
+                .map_err(|_| anyhow::anyhow!("db mutex poisoned"))?;
             let cutoff = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64 - 3600;
-            guard.execute("DELETE FROM obs_history WHERE recorded_at < ?1", params![cutoff])?;
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+                - 3600;
+            guard.execute(
+                "DELETE FROM obs_history WHERE recorded_at < ?1",
+                params![cutoff],
+            )?;
             Ok(())
         })
         .await?
@@ -126,32 +136,36 @@ impl Db {
 
     pub async fn get_detail(&self, id: &str) -> anyhow::Result<Option<StationDetail>> {
         let conn = Arc::clone(&self.conn);
-        let id   = id.to_string();
+        let id = id.to_string();
         tokio::task::spawn_blocking(move || -> anyhow::Result<Option<StationDetail>> {
-            let guard = conn.lock().map_err(|_| anyhow::anyhow!("db mutex poisoned"))?;
+            let guard = conn
+                .lock()
+                .map_err(|_| anyhow::anyhow!("db mutex poisoned"))?;
 
             let result = guard.query_row(
                 "SELECT id,name,temp_c,dewp_c,wdir,wspd_kt,wx_string,clouds,flt_cat
                  FROM stations WHERE id=?1",
                 params![id],
-                |row| Ok(StationDetail {
-                    id:        row.get(0)?,
-                    name:      row.get::<_,Option<String>>(1)?.unwrap_or_default(),
-                    temp_c:    row.get(2)?,
-                    dewp_c:    row.get(3)?,
-                    wdir:      row.get::<_,Option<i32>>(4)?.map(|d| d as u16),
-                    wspd_kt:   row.get(5)?,
-                    wx_string: row.get::<_,Option<String>>(6)?.unwrap_or_default(),
-                    clouds:    row.get::<_,Option<String>>(7)?.unwrap_or_default(),
-                    flt_cat:   row.get::<_,Option<String>>(8)?.unwrap_or_default(),
-                    history:   vec![],
-                }),
+                |row| {
+                    Ok(StationDetail {
+                        id: row.get(0)?,
+                        name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        temp_c: row.get(2)?,
+                        dewp_c: row.get(3)?,
+                        wdir: row.get::<_, Option<i32>>(4)?.map(|d| d as u16),
+                        wspd_kt: row.get(5)?,
+                        wx_string: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                        clouds: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                        flt_cat: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
+                        history: vec![],
+                    })
+                },
             );
 
             let mut detail = match result {
-                Ok(d)                                     => d,
+                Ok(d) => d,
                 Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-                Err(e)                                    => return Err(e.into()),
+                Err(e) => return Err(e.into()),
             };
 
             let mut stmt = guard.prepare(
@@ -159,7 +173,9 @@ impl Db {
                  WHERE station_id=?1 ORDER BY recorded_at ASC LIMIT 3",
             )?;
             detail.history = stmt
-                .query_map(params![detail.id], |r| Ok([r.get::<_,f64>(0)?, r.get::<_,f64>(1)?]))?
+                .query_map(params![detail.id], |r| {
+                    Ok([r.get::<_, f64>(0)?, r.get::<_, f64>(1)?])
+                })?
                 .collect::<rusqlite::Result<_>>()?;
 
             Ok(Some(detail))

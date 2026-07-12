@@ -1,3 +1,5 @@
+use flate2::read::GzDecoder;
+use std::collections::HashMap;
 /// Bulk METAR downloader.
 ///
 /// aviationweather.gov publishes `metars.cache.csv.gz` — a gzip-compressed CSV
@@ -7,26 +9,24 @@
 /// This module downloads the file, decompresses it in-memory, and parses each row
 /// into a `BulkMETAR` struct ready to be streamed into the proxima trie.
 use std::io::Read;
-use flate2::read::GzDecoder;
-use std::collections::HashMap;
 
 const BULK_URL: &str = "https://aviationweather.gov/data/cache/metars.cache.csv.gz";
 
 /// One METAR observation parsed from the bulk CSV.
 #[derive(Debug, Clone)]
 pub struct BulkMETAR {
-    pub icao_id:  String,
-    pub lat:      f64,
-    pub lon:      f64,
-    pub temp_c:   Option<f64>,
-    pub dewp_c:   Option<f64>,
+    pub icao_id: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub temp_c: Option<f64>,
+    pub dewp_c: Option<f64>,
     pub wind_dir: Option<u16>,
     pub wind_spd: Option<f64>,
     pub wind_gst: Option<f64>,
-    pub wx:       String,
-    pub sky:      String,
-    pub flt_cat:  String,
-    pub _elev_m:  f64,
+    pub wx: String,
+    pub sky: String,
+    pub flt_cat: String,
+    pub _elev_m: f64,
 }
 
 // ── Download + parse ───────────────────────────────────────────────────────
@@ -75,7 +75,11 @@ fn parse_csv(content: &str) -> Vec<BulkMETAR> {
         for (i, name) in header.split(',').enumerate() {
             let n = name.trim_matches('"');
             let cnt = dup.entry(n).or_insert(0);
-            let key = if *cnt == 0 { n.to_string() } else { format!("{n}_{cnt}") };
+            let key = if *cnt == 0 {
+                n.to_string()
+            } else {
+                format!("{n}_{cnt}")
+            };
             *cnt += 1;
             m.insert(key, i);
         }
@@ -83,7 +87,8 @@ fn parse_csv(content: &str) -> Vec<BulkMETAR> {
     };
 
     let get = |fields: &[&str], key: &str| -> String {
-        col_idx.get(key)
+        col_idx
+            .get(key)
             .and_then(|&i| fields.get(i))
             .map(|s| s.trim_matches('"').trim().to_string())
             .unwrap_or_default()
@@ -92,13 +97,17 @@ fn parse_csv(content: &str) -> Vec<BulkMETAR> {
     let mut records = Vec::new();
 
     for line in lines {
-        if line.starts_with('#') || line.trim().is_empty() { continue; }
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
 
         // First field may be quoted (raw METAR text with commas); split carefully.
         let fields: Vec<&str> = split_row(line);
 
         let icao = get(&fields, "station_id");
-        if icao.is_empty() { continue; }
+        if icao.is_empty() {
+            continue;
+        }
 
         let lat = match get(&fields, "latitude").parse::<f64>() {
             Ok(v) if (-90.0..=90.0).contains(&v) => v,
@@ -120,21 +129,26 @@ fn parse_csv(content: &str) -> Vec<BulkMETAR> {
                     break;
                 }
             }
-            if best.is_empty() { get(&fields, "sky_cover") } else { best }
+            if best.is_empty() {
+                get(&fields, "sky_cover")
+            } else {
+                best
+            }
         };
 
         records.push(BulkMETAR {
-            icao_id:  icao,
-            lat, lon,
-            temp_c:   get(&fields, "temp_c").parse().ok(),
-            dewp_c:   get(&fields, "dewpoint_c").parse().ok(),
+            icao_id: icao,
+            lat,
+            lon,
+            temp_c: get(&fields, "temp_c").parse().ok(),
+            dewp_c: get(&fields, "dewpoint_c").parse().ok(),
             wind_dir: get(&fields, "wind_dir_degrees").parse().ok(),
             wind_spd: get(&fields, "wind_speed_kt").parse().ok(),
             wind_gst: get(&fields, "wind_gust_kt").parse().ok(),
-            wx:       get(&fields, "wx_string"),
+            wx: get(&fields, "wx_string"),
             sky,
-            flt_cat:  get(&fields, "flight_category"),
-            _elev_m:  get(&fields, "elevation_m").parse().unwrap_or(0.0),
+            flt_cat: get(&fields, "flight_category"),
+            _elev_m: get(&fields, "elevation_m").parse().unwrap_or(0.0),
         });
     }
 
@@ -148,7 +162,9 @@ fn split_row(line: &str) -> Vec<&str> {
         let mut i = 1usize;
         let bytes = line.as_bytes();
         loop {
-            if i >= bytes.len() { break; }
+            if i >= bytes.len() {
+                break;
+            }
             if bytes[i] == b'"' {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
                     i += 2; // escaped quote ""
@@ -160,7 +176,11 @@ fn split_row(line: &str) -> Vec<&str> {
             }
         }
         // i now points to the closing quote; skip ',' after it
-        let after = if i + 1 < line.len() { &line[i + 2..] } else { "" };
+        let after = if i + 1 < line.len() {
+            &line[i + 2..]
+        } else {
+            ""
+        };
         let mut fields = vec![&line[1..i]];
         fields.extend(after.split(','));
         fields
@@ -175,31 +195,53 @@ fn split_row(line: &str) -> Vec<&str> {
 /// so the existing weather icon table in the UI can render the right emoji.
 pub fn wx_to_wmo(wx: &str, sky: &str) -> u8 {
     // Thunderstorm (check TS first — it overrides everything)
-    if wx.contains("TS") { return 95; }
+    if wx.contains("TS") {
+        return 95;
+    }
     // Freezing precipitation
-    if wx.contains("FZRA") || wx.contains("FZDZ") { return 67; }
+    if wx.contains("FZRA") || wx.contains("FZDZ") {
+        return 67;
+    }
     // Snow
-    if wx.contains("SN") || wx.contains("SG") || wx.contains("PL") { return 71; }
+    if wx.contains("SN") || wx.contains("SG") || wx.contains("PL") {
+        return 71;
+    }
     // Snow showers
-    if wx.contains("SHSN") { return 85; }
+    if wx.contains("SHSN") {
+        return 85;
+    }
     // Rain showers
-    if wx.contains("SHRA") || wx.contains("SH") { return 80; }
+    if wx.contains("SHRA") || wx.contains("SH") {
+        return 80;
+    }
     // Heavy rain
-    if wx.contains("+RA") { return 65; }
+    if wx.contains("+RA") {
+        return 65;
+    }
     // Moderate rain
-    if wx.contains("RA") { return 61; }
+    if wx.contains("RA") {
+        return 61;
+    }
     // Drizzle
-    if wx.contains("DZ") { return 51; }
+    if wx.contains("DZ") {
+        return 51;
+    }
     // Fog / mist
-    if wx.contains("FG") { return 45; }
-    if wx.contains("BR") { return 45; }
+    if wx.contains("FG") {
+        return 45;
+    }
+    if wx.contains("BR") {
+        return 45;
+    }
     // Haze / smoke → use "mainly clear" (no good WMO match)
-    if wx.contains("HZ") || wx.contains("FU") { return 1; }
+    if wx.contains("HZ") || wx.contains("FU") {
+        return 1;
+    }
     // No precipitation — use cloud cover
     match sky {
         s if s.starts_with("OVC") || s.starts_with("BKN") => 3, // overcast
-        s if s.starts_with("SCT") => 2,                          // partly cloudy
-        s if s.starts_with("FEW") => 1,                          // mainly clear
-        _ => 0,                                                   // clear
+        s if s.starts_with("SCT") => 2,                         // partly cloudy
+        s if s.starts_with("FEW") => 1,                         // mainly clear
+        _ => 0,                                                 // clear
     }
 }

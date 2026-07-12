@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use s2::{cellid::CellID, latlng::LatLng, s1};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A geographic entry stored in the trie.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeoEntry {
-    pub id:      String,
-    pub lat:     f64,
-    pub lon:     f64,
+    pub id: String,
+    pub lat: f64,
+    pub lon: f64,
     pub payload: serde_json::Value,
     /// Unix milliseconds when this entry was last written to a shard.
     /// Set to `SystemTime::now()` by `RedisStore::persist_trie()` when 0.
@@ -19,7 +19,7 @@ pub struct GeoEntry {
 #[derive(Default)]
 struct TrieNode {
     children: HashMap<u8, Box<TrieNode>>,
-    entries:  Vec<GeoEntry>,
+    entries: Vec<GeoEntry>,
 }
 
 /// An S2-cell-keyed trie.
@@ -29,37 +29,43 @@ struct TrieNode {
 /// Neighbour-cell queries are handled by passing multiple tokens to
 /// [`GeoTrie::query_tokens`].
 pub struct GeoTrie {
-    root:         TrieNode,
+    root: TrieNode,
     pub s2_level: u8,
 }
 
 impl GeoTrie {
     pub fn new(s2_level: u8) -> Self {
         assert!((1..=30).contains(&s2_level), "S2 level must be 1–30");
-        Self { root: TrieNode::default(), s2_level }
+        Self {
+            root: TrieNode::default(),
+            s2_level,
+        }
     }
 
     /// S2 cell token (hex string, trailing zeros trimmed) for a coordinate.
     pub fn cell_token(&self, lat: f64, lon: f64) -> String {
-        let ll   = LatLng::new(s1::Deg(lat).into(), s1::Deg(lon).into());
+        let ll = LatLng::new(s1::Deg(lat).into(), s1::Deg(lon).into());
         let cell = CellID::from(ll).parent(self.s2_level as u64);
         s2_token(cell)
     }
 
     pub fn insert(&mut self, entry: GeoEntry) {
         let token = self.cell_token(entry.lat, entry.lon);
-        descend_mut(&mut self.root, token.as_bytes()).entries.push(entry);
+        descend_mut(&mut self.root, token.as_bytes())
+            .entries
+            .push(entry);
     }
 
     pub fn query_token(&self, token: &str) -> Vec<&GeoEntry> {
         match descend(&self.root, token.as_bytes()) {
             Some(n) => n.entries.iter().collect(),
-            None    => vec![],
+            None => vec![],
         }
     }
 
     pub fn query_tokens(&self, tokens: &[String]) -> Vec<GeoEntry> {
-        tokens.iter()
+        tokens
+            .iter()
             .flat_map(|t| self.query_token(t))
             .cloned()
             .collect()
@@ -72,9 +78,15 @@ impl GeoTrie {
         out
     }
 
-    pub fn clear(&mut self)        { self.root = TrieNode::default(); }
-    pub fn len(&self)   -> usize   { count_entries(&self.root) }
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn clear(&mut self) {
+        self.root = TrieNode::default();
+    }
+    pub fn len(&self) -> usize {
+        count_entries(&self.root)
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// Remove entity `id` from the node at the given S2 token, then
     /// **prune every ancestor branch node** that becomes empty as a result.
@@ -103,12 +115,13 @@ impl GeoTrie {
     /// holding data it is no longer responsible for.  Returns the removed
     /// entries so the caller can confirm the count or log them.
     pub fn remove_range(&mut self, prefix_start: &str, prefix_end: &str) -> Vec<GeoEntry> {
-        let in_range: Vec<GeoEntry> = self.all_entries()
+        let in_range: Vec<GeoEntry> = self
+            .all_entries()
             .into_iter()
             .filter(|e| {
                 let token = self.cell_token(e.lat, e.lon);
                 let ge = prefix_start.is_empty() || token.as_str() >= prefix_start;
-                let lt = prefix_end.is_empty()   || token.as_str() <  prefix_end;
+                let lt = prefix_end.is_empty() || token.as_str() < prefix_end;
                 ge && lt
             })
             .collect();
@@ -129,22 +142,31 @@ impl GeoTrie {
 
 /// Standard S2 token: 64-bit ID as lowercase hex, trailing zeros stripped.
 fn s2_token(cell: CellID) -> String {
-    if cell.0 == 0 { return "X".into(); }
+    if cell.0 == 0 {
+        return "X".into();
+    }
     let hex = format!("{:016x}", cell.0);
     hex.trim_end_matches('0').to_string()
 }
 
 fn descend_mut<'a>(node: &'a mut TrieNode, bytes: &[u8]) -> &'a mut TrieNode {
-    if bytes.is_empty() { return node; }
-    let child = node.children
+    if bytes.is_empty() {
+        return node;
+    }
+    let child = node
+        .children
         .entry(bytes[0])
         .or_insert_with(|| Box::new(TrieNode::default()));
     descend_mut(child, &bytes[1..])
 }
 
 fn descend<'a>(node: &'a TrieNode, bytes: &[u8]) -> Option<&'a TrieNode> {
-    if bytes.is_empty() { return Some(node); }
-    node.children.get(&bytes[0]).and_then(|c| descend(c, &bytes[1..]))
+    if bytes.is_empty() {
+        return Some(node);
+    }
+    node.children
+        .get(&bytes[0])
+        .and_then(|c| descend(c, &bytes[1..]))
 }
 
 fn collect_entries(node: &TrieNode, out: &mut Vec<GeoEntry>) {
@@ -155,7 +177,12 @@ fn collect_entries(node: &TrieNode, out: &mut Vec<GeoEntry>) {
 }
 
 fn count_entries(node: &TrieNode) -> usize {
-    node.entries.len() + node.children.values().map(|c| count_entries(c)).sum::<usize>()
+    node.entries.len()
+        + node
+            .children
+            .values()
+            .map(|c| count_entries(c))
+            .sum::<usize>()
 }
 
 /// Recursive remove-with-pruning.
@@ -197,5 +224,9 @@ fn prune_remove(node: &mut TrieNode, bytes: &[u8], id: &str) -> bool {
 }
 
 fn count_nodes(node: &TrieNode) -> usize {
-    1 + node.children.values().map(|c| count_nodes(c)).sum::<usize>()
+    1 + node
+        .children
+        .values()
+        .map(|c| count_nodes(c))
+        .sum::<usize>()
 }

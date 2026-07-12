@@ -9,19 +9,19 @@ use serde::Deserialize;
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct WeatherObs {
-    pub id:           String,
-    pub name:         String,
-    pub lat:          f64,
-    pub lon:          f64,
-    pub temp_c:       f64,
+    pub id: String,
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub temp_c: f64,
     pub feels_like_c: f64,
     pub humidity_pct: f64,
-    pub wspd_kt:      f64,
-    pub gust_kt:      f64,
-    pub wdir:         u16,
-    pub wmo_code:     u8,
-    pub precip:       f64,
-    pub cloud_pct:    f64,
+    pub wspd_kt: f64,
+    pub gust_kt: f64,
+    pub wdir: u16,
+    pub wmo_code: u8,
+    pub precip: f64,
+    pub cloud_pct: f64,
     pub pressure_hpa: f64,
 }
 
@@ -29,49 +29,49 @@ pub struct WeatherObs {
 
 pub fn wmo_emoji(code: u8) -> &'static str {
     match code {
-        0            => "☀️",
-        1            => "🌤️",
-        2            => "⛅",
-        3            => "☁️",
-        45 | 48      => "🌫️",
-        51..=57      => "🌦️",
-        61..=65      => "🌧️",
-        66 | 67      => "🌨️",
-        71..=77      => "❄️",
-        80..=82      => "🌦️",
-        85 | 86      => "🌨️",
-        95           => "⛈️",
-        96 | 99      => "⛈️",
-        _            => "🌡️",
+        0 => "☀️",
+        1 => "🌤️",
+        2 => "⛅",
+        3 => "☁️",
+        45 | 48 => "🌫️",
+        51..=57 => "🌦️",
+        61..=65 => "🌧️",
+        66 | 67 => "🌨️",
+        71..=77 => "❄️",
+        80..=82 => "🌦️",
+        85 | 86 => "🌨️",
+        95 => "⛈️",
+        96 | 99 => "⛈️",
+        _ => "🌡️",
     }
 }
 
 pub fn wmo_label(code: u8) -> &'static str {
     match code {
-        0        => "Clear sky",
-        1        => "Mainly clear",
-        2        => "Partly cloudy",
-        3        => "Overcast",
-        45       => "Fog",
-        48       => "Icy fog",
-        51       => "Light drizzle",
-        53       => "Moderate drizzle",
-        55       => "Heavy drizzle",
-        61       => "Light rain",
-        63       => "Moderate rain",
-        65       => "Heavy rain",
-        66 | 67  => "Freezing rain",
-        71       => "Light snow",
-        73       => "Moderate snow",
-        75       => "Heavy snow",
-        77       => "Snow grains",
-        80       => "Light showers",
-        81       => "Moderate showers",
-        82       => "Heavy showers",
-        85 | 86  => "Snow showers",
-        95       => "Thunderstorm",
-        96 | 99  => "Thunderstorm + hail",
-        _        => "Unknown",
+        0 => "Clear sky",
+        1 => "Mainly clear",
+        2 => "Partly cloudy",
+        3 => "Overcast",
+        45 => "Fog",
+        48 => "Icy fog",
+        51 => "Light drizzle",
+        53 => "Moderate drizzle",
+        55 => "Heavy drizzle",
+        61 => "Light rain",
+        63 => "Moderate rain",
+        65 => "Heavy rain",
+        66 | 67 => "Freezing rain",
+        71 => "Light snow",
+        73 => "Moderate snow",
+        75 => "Heavy snow",
+        77 => "Snow grains",
+        80 => "Light showers",
+        81 => "Moderate showers",
+        82 => "Heavy showers",
+        85 | 86 => "Snow showers",
+        95 => "Thunderstorm",
+        96 | 99 => "Thunderstorm + hail",
+        _ => "Unknown",
     }
 }
 
@@ -91,23 +91,23 @@ pub fn temp_to_altitude_m(temp_c: f64) -> f64 {
 
 #[derive(Deserialize)]
 struct OmResponse {
-    latitude:  f64,
+    latitude: f64,
     longitude: f64,
-    current:   CurrentWeather,
+    current: CurrentWeather,
 }
 
 #[derive(Deserialize)]
 struct CurrentWeather {
-    temperature_2m:        f64,
-    apparent_temperature:  f64,
-    relative_humidity_2m:  f64,
-    wind_speed_10m:        f64,
-    wind_gusts_10m:        f64,
-    wind_direction_10m:    f64,
-    weather_code:          f64,
-    precipitation:         f64,
-    cloud_cover:           f64,
-    surface_pressure:      f64,
+    temperature_2m: f64,
+    apparent_temperature: f64,
+    relative_humidity_2m: f64,
+    wind_speed_10m: f64,
+    wind_gusts_10m: f64,
+    wind_direction_10m: f64,
+    weather_code: f64,
+    precipitation: f64,
+    cloud_cover: f64,
+    surface_pressure: f64,
 }
 
 // ── Global 5° grid (2520 points, ~500 km spacing) ─────────────────────────
@@ -147,12 +147,15 @@ pub async fn fetch_stations(client: &reqwest::Client) -> anyhow::Result<Vec<Weat
         let body = client
             .get("https://api.open-meteo.com/v1/forecast")
             .query(&[
-                ("latitude",  lats.join(",")),
+                ("latitude", lats.join(",")),
                 ("longitude", lons.join(",")),
-                ("current",
-                 "temperature_2m,apparent_temperature,relative_humidity_2m,\
+                (
+                    "current",
+                    "temperature_2m,apparent_temperature,relative_humidity_2m,\
                   precipitation,weather_code,cloud_cover,surface_pressure,\
-                  wind_speed_10m,wind_direction_10m,wind_gusts_10m".to_string()),
+                  wind_speed_10m,wind_direction_10m,wind_gusts_10m"
+                        .to_string(),
+                ),
                 ("wind_speed_unit", "kn".to_string()),
             ])
             .timeout(std::time::Duration::from_secs(30))
@@ -163,35 +166,47 @@ pub async fn fetch_stations(client: &reqwest::Client) -> anyhow::Result<Vec<Weat
             .await?;
 
         let records: Vec<OmResponse> = match body {
-            serde_json::Value::Array(arr) =>
-                serde_json::from_value(serde_json::Value::Array(arr)).unwrap_or_default(),
-            serde_json::Value::Object(ref obj) if obj.contains_key("error") =>
-                anyhow::bail!("Open-Meteo error: {}", body["reason"].as_str().unwrap_or("unknown")),
+            serde_json::Value::Array(arr) => {
+                serde_json::from_value(serde_json::Value::Array(arr)).unwrap_or_default()
+            }
+            serde_json::Value::Object(ref obj) if obj.contains_key("error") => anyhow::bail!(
+                "Open-Meteo error: {}",
+                body["reason"].as_str().unwrap_or("unknown")
+            ),
             single => match serde_json::from_value::<OmResponse>(single) {
-                Ok(r)  => vec![r],
+                Ok(r) => vec![r],
                 Err(_) => vec![],
             },
         };
 
         for r in records {
-            let lat = (r.latitude  * 10.0).round() / 10.0;
+            let lat = (r.latitude * 10.0).round() / 10.0;
             let lon = (r.longitude * 10.0).round() / 10.0;
             let wmo = r.current.weather_code as u8;
-            let lat_str = if lat >= 0.0 { format!("{lat}°N") } else { format!("{}°S", lat.abs()) };
-            let lon_str = if lon >= 0.0 { format!("{lon}°E") } else { format!("{}°W", lon.abs()) };
+            let lat_str = if lat >= 0.0 {
+                format!("{lat}°N")
+            } else {
+                format!("{}°S", lat.abs())
+            };
+            let lon_str = if lon >= 0.0 {
+                format!("{lon}°E")
+            } else {
+                format!("{}°W", lon.abs())
+            };
             all.push(WeatherObs {
-                id:           format!("{lat}_{lon}"),
-                name:         format!("{lat_str} {lon_str}"),
-                lat, lon,
-                temp_c:       r.current.temperature_2m,
+                id: format!("{lat}_{lon}"),
+                name: format!("{lat_str} {lon_str}"),
+                lat,
+                lon,
+                temp_c: r.current.temperature_2m,
                 feels_like_c: r.current.apparent_temperature,
                 humidity_pct: r.current.relative_humidity_2m,
-                wspd_kt:      r.current.wind_speed_10m,
-                gust_kt:      r.current.wind_gusts_10m,
-                wdir:         r.current.wind_direction_10m as u16,
-                wmo_code:     wmo,
-                precip:       r.current.precipitation,
-                cloud_pct:    r.current.cloud_cover,
+                wspd_kt: r.current.wind_speed_10m,
+                gust_kt: r.current.wind_gusts_10m,
+                wdir: r.current.wind_direction_10m as u16,
+                wmo_code: wmo,
+                precip: r.current.precipitation,
+                cloud_pct: r.current.cloud_cover,
                 pressure_hpa: r.current.surface_pressure,
             });
         }

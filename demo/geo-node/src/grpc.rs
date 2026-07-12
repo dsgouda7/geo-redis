@@ -1,178 +1,285 @@
 //! Proto message types are defined with prost derives to match docs/proto/georedis.proto.
 //! Serves on a dedicated port (default: HTTP_PORT + 10).
 
-use std::sync::Arc;
-use tonic::{async_trait, codegen::*, Request, Response, Status};
+use crate::{cell_token, viewport_tokens};
 use proxima::GeoEntry;
 use redis::AsyncCommands;
-use crate::{cell_token, viewport_tokens};
+use std::sync::Arc;
+use tonic::{async_trait, codegen::*, Request, Response, Status};
 
 // ── Proto messages ─────────────────────────────────────────────────────────
 
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct GrpcGeoEntry {
-    #[prost(string, tag="1")] pub id:           String,
-    #[prost(double, tag="2")] pub lat:          f64,
-    #[prost(double, tag="3")] pub lon:          f64,
-    #[prost(string, tag="4")] pub payload_json: String,
+    #[prost(string, tag = "1")]
+    pub id: String,
+    #[prost(double, tag = "2")]
+    pub lat: f64,
+    #[prost(double, tag = "3")]
+    pub lon: f64,
+    #[prost(string, tag = "4")]
+    pub payload_json: String,
 }
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct InsertBatchRequest {
-    #[prost(message, repeated, tag="1")] pub entries: Vec<GrpcGeoEntry>,
+    #[prost(message, repeated, tag = "1")]
+    pub entries: Vec<GrpcGeoEntry>,
 }
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct InsertResponse {
-    #[prost(bool,   tag="1")] pub success:        bool,
-    #[prost(uint32, tag="2")] pub entries_written: u32,
-    #[prost(string, tag="3")] pub error:           String,
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(uint32, tag = "2")]
+    pub entries_written: u32,
+    #[prost(string, tag = "3")]
+    pub error: String,
 }
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct RegionRequest {
-    #[prost(double, tag="1")] pub south: f64,
-    #[prost(double, tag="2")] pub west:  f64,
-    #[prost(double, tag="3")] pub north: f64,
-    #[prost(double, tag="4")] pub east:  f64,
+    #[prost(double, tag = "1")]
+    pub south: f64,
+    #[prost(double, tag = "2")]
+    pub west: f64,
+    #[prost(double, tag = "3")]
+    pub north: f64,
+    #[prost(double, tag = "4")]
+    pub east: f64,
 }
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct GeoEntriesResponse {
-    #[prost(message, repeated, tag="1")] pub entries: Vec<GrpcGeoEntry>,
-    #[prost(uint32,            tag="2")] pub count:   u32,
+    #[prost(message, repeated, tag = "1")]
+    pub entries: Vec<GrpcGeoEntry>,
+    #[prost(uint32, tag = "2")]
+    pub count: u32,
 }
-#[derive(Clone, PartialEq, prost::Message)] pub struct Empty {}
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct Empty {}
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct TraceRequest {
-    #[prost(double, tag="1")] pub lat: f64,
-    #[prost(double, tag="2")] pub lon: f64,
+    #[prost(double, tag = "1")]
+    pub lat: f64,
+    #[prost(double, tag = "2")]
+    pub lon: f64,
 }
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct TraceResponse {
-    #[prost(string, tag="1")] pub s2_token:            String,
-    #[prost(string, tag="2")] pub owning_node_id:       String,
-    #[prost(string, tag="3")] pub owning_prefix_range:  String,
-    #[prost(string, tag="4")] pub served_by:            String,
-    #[prost(bool,   tag="5")] pub is_local:             bool,
+    #[prost(string, tag = "1")]
+    pub s2_token: String,
+    #[prost(string, tag = "2")]
+    pub owning_node_id: String,
+    #[prost(string, tag = "3")]
+    pub owning_prefix_range: String,
+    #[prost(string, tag = "4")]
+    pub served_by: String,
+    #[prost(bool, tag = "5")]
+    pub is_local: bool,
 }
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ClusterNodeInfo {
-    #[prost(string, tag="1")] pub node_id:      String,
-    #[prost(string, tag="2")] pub addr:         String,
-    #[prost(string, tag="3")] pub prefix_start: String,
-    #[prost(string, tag="4")] pub prefix_end:   String,
-    #[prost(uint64, tag="5")] pub key_count:    u64,
-    #[prost(string, tag="6")] pub status:       String,
+    #[prost(string, tag = "1")]
+    pub node_id: String,
+    #[prost(string, tag = "2")]
+    pub addr: String,
+    #[prost(string, tag = "3")]
+    pub prefix_start: String,
+    #[prost(string, tag = "4")]
+    pub prefix_end: String,
+    #[prost(uint64, tag = "5")]
+    pub key_count: u64,
+    #[prost(string, tag = "6")]
+    pub status: String,
 }
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ClusterResponse {
-    #[prost(message, repeated, tag="1")] pub nodes: Vec<ClusterNodeInfo>,
+    #[prost(message, repeated, tag = "1")]
+    pub nodes: Vec<ClusterNodeInfo>,
 }
 
 // ── Service trait ──────────────────────────────────────────────────────────
 
 #[async_trait]
 pub trait GeoRedisGrpc: Send + Sync + 'static {
-    async fn insert(&self, r: Request<GrpcGeoEntry>)         -> Result<Response<InsertResponse>,   Status>;
-    async fn insert_batch(&self, r: Request<InsertBatchRequest>) -> Result<Response<InsertResponse>,   Status>;
-    async fn query_region(&self, r: Request<RegionRequest>)  -> Result<Response<GeoEntriesResponse>, Status>;
-    async fn get_cluster(&self,  r: Request<Empty>)          -> Result<Response<ClusterResponse>,   Status>;
-    async fn trace_coordinate(&self, r: Request<TraceRequest>) -> Result<Response<TraceResponse>,  Status>;
+    async fn insert(&self, r: Request<GrpcGeoEntry>) -> Result<Response<InsertResponse>, Status>;
+    async fn insert_batch(
+        &self,
+        r: Request<InsertBatchRequest>,
+    ) -> Result<Response<InsertResponse>, Status>;
+    async fn query_region(
+        &self,
+        r: Request<RegionRequest>,
+    ) -> Result<Response<GeoEntriesResponse>, Status>;
+    async fn get_cluster(&self, r: Request<Empty>) -> Result<Response<ClusterResponse>, Status>;
+    async fn trace_coordinate(
+        &self,
+        r: Request<TraceRequest>,
+    ) -> Result<Response<TraceResponse>, Status>;
 }
 
 // ── Implementation ─────────────────────────────────────────────────────────
 
-pub struct GeoRedisService { pub state: crate::AppState }
+pub struct GeoRedisService {
+    pub state: crate::AppState,
+}
 
 #[async_trait]
 impl GeoRedisGrpc for GeoRedisService {
     async fn insert(&self, req: Request<GrpcGeoEntry>) -> Result<Response<InsertResponse>, Status> {
-        let e   = req.into_inner();
+        let e = req.into_inner();
         let ttl = self.state.cfg.entity_ttl_secs;
         let s2l = self.state.cfg.s2_level;
         let geo = GeoEntry {
-            id: e.id.clone(), lat: e.lat, lon: e.lon,
+            id: e.id.clone(),
+            lat: e.lat,
+            lon: e.lon,
             payload: serde_json::from_str(&e.payload_json).unwrap_or_default(),
             written_at: 0,
         };
-        let mut conn = self.state.redis.get_multiplexed_async_connection().await
+        let mut conn = self
+            .state
+            .redis
+            .get_multiplexed_async_connection()
+            .await
             .map_err(|e| Status::internal(e.to_string()))?;
         let new_tok = cell_token(e.lat, e.lon, s2l);
-        let st  = &self.state.store;
-        let ak  = st.k_entity(&e.id);
-        let ck  = st.k_cell(&new_tok);
+        let st = &self.state.store;
+        let ak = st.k_entity(&e.id);
+        let ck = st.k_cell(&new_tok);
         let loc = st.k_location(&e.id);
-        let js  = serde_json::to_string(&geo).unwrap_or_default();
+        let js = serde_json::to_string(&geo).unwrap_or_default();
         if let Ok(Some(old)) = conn.get::<_, Option<String>>(&loc).await {
             if old != new_tok {
                 let _: () = conn.srem(st.k_cell(&old), &e.id).await.unwrap_or(());
             }
         }
         let mut pipe = redis::pipe();
-        pipe.set_ex(&ak, &js, ttl).ignore().sadd(&ck, &e.id).ignore().set_ex(&loc, &new_tok, ttl).ignore();
+        pipe.set_ex(&ak, &js, ttl)
+            .ignore()
+            .sadd(&ck, &e.id)
+            .ignore()
+            .set_ex(&loc, &new_tok, ttl)
+            .ignore();
         let _: () = pipe.query_async(&mut conn).await.unwrap_or(());
-        Ok(Response::new(InsertResponse { success: true, entries_written: 1, error: String::new() }))
+        Ok(Response::new(InsertResponse {
+            success: true,
+            entries_written: 1,
+            error: String::new(),
+        }))
     }
 
-    async fn insert_batch(&self, req: Request<InsertBatchRequest>) -> Result<Response<InsertResponse>, Status> {
+    async fn insert_batch(
+        &self,
+        req: Request<InsertBatchRequest>,
+    ) -> Result<Response<InsertResponse>, Status> {
         let entries = req.into_inner().entries;
-        let count   = entries.len() as u32;
-        for e in entries { self.insert(Request::new(e)).await?; }
-        Ok(Response::new(InsertResponse { success: true, entries_written: count, error: String::new() }))
+        let count = entries.len() as u32;
+        for e in entries {
+            self.insert(Request::new(e)).await?;
+        }
+        Ok(Response::new(InsertResponse {
+            success: true,
+            entries_written: count,
+            error: String::new(),
+        }))
     }
 
-    async fn query_region(&self, req: Request<RegionRequest>) -> Result<Response<GeoEntriesResponse>, Status> {
-        let r      = req.into_inner();
+    async fn query_region(
+        &self,
+        req: Request<RegionRequest>,
+    ) -> Result<Response<GeoEntriesResponse>, Status> {
+        let r = req.into_inner();
         let tokens = viewport_tokens(r.south, r.west, r.north, r.east, self.state.cfg.s2_level);
-        let mut conn = self.state.redis.get_multiplexed_async_connection().await
+        let mut conn = self
+            .state
+            .redis
+            .get_multiplexed_async_connection()
+            .await
             .map_err(|e| Status::internal(e.to_string()))?;
-        let st       = &self.state.store;
+        let st = &self.state.store;
         let cell_keys: Vec<String> = tokens.iter().map(|t| st.k_cell(t)).collect();
         let ids: Vec<String> = conn.sunion(cell_keys).await.unwrap_or_default();
         let mut pipe = redis::pipe();
-        for id in &ids { pipe.get(st.k_entity(id)); }
+        for id in &ids {
+            pipe.get(st.k_entity(id));
+        }
         let jsons: Vec<Option<String>> = pipe.query_async(&mut conn).await.unwrap_or_default();
-        let entries: Vec<GrpcGeoEntry> = jsons.into_iter().flatten()
+        let entries: Vec<GrpcGeoEntry> = jsons
+            .into_iter()
+            .flatten()
             .filter_map(|j| serde_json::from_str::<GeoEntry>(&j).ok())
-            .map(|e| GrpcGeoEntry { id: e.id, lat: e.lat, lon: e.lon,
-                payload_json: serde_json::to_string(&e.payload).unwrap_or_default() })
+            .map(|e| GrpcGeoEntry {
+                id: e.id,
+                lat: e.lat,
+                lon: e.lon,
+                payload_json: serde_json::to_string(&e.payload).unwrap_or_default(),
+            })
             .collect();
         let count = entries.len() as u32;
         Ok(Response::new(GeoEntriesResponse { entries, count }))
     }
 
     async fn get_cluster(&self, _: Request<Empty>) -> Result<Response<ClusterResponse>, Status> {
-        let ring  = self.state.ring.read().await;
-        let nodes = ring.all_nodes().map(|n| ClusterNodeInfo {
-            node_id: n.node_id.clone(), addr: n.addr.clone(),
-            prefix_start: n.prefix_start.clone(), prefix_end: n.prefix_end.clone(),
-            key_count: n.key_count, status: format!("{:?}", n.status),
-        }).collect();
+        let ring = self.state.ring.read().await;
+        let nodes = ring
+            .all_nodes()
+            .map(|n| ClusterNodeInfo {
+                node_id: n.node_id.clone(),
+                addr: n.addr.clone(),
+                prefix_start: n.prefix_start.clone(),
+                prefix_end: n.prefix_end.clone(),
+                key_count: n.key_count,
+                status: format!("{:?}", n.status),
+            })
+            .collect();
         Ok(Response::new(ClusterResponse { nodes }))
     }
 
-    async fn trace_coordinate(&self, req: Request<TraceRequest>) -> Result<Response<TraceResponse>, Status> {
-        let r     = req.into_inner();
+    async fn trace_coordinate(
+        &self,
+        req: Request<TraceRequest>,
+    ) -> Result<Response<TraceResponse>, Status> {
+        let r = req.into_inner();
         let token = cell_token(r.lat, r.lon, self.state.cfg.s2_level);
-        let ring  = self.state.ring.read().await;
-        let my    = self.state.my_info.read().await;
-        let (oid, orng) = ring.route(&token)
-            .map(|n| (n.node_id.clone(), format!("[{}, {})", n.prefix_start, n.prefix_end)))
+        let ring = self.state.ring.read().await;
+        let my = self.state.my_info.read().await;
+        let (oid, orng) = ring
+            .route(&token)
+            .map(|n| {
+                (
+                    n.node_id.clone(),
+                    format!("[{}, {})", n.prefix_start, n.prefix_end),
+                )
+            })
             .unwrap_or_else(|| ("unowned".into(), "—".into()));
         Ok(Response::new(TraceResponse {
-            s2_token: token.clone(), owning_node_id: oid, owning_prefix_range: orng,
-            served_by: self.state.cfg.node_id.clone(), is_local: my.owns(&token),
+            s2_token: token.clone(),
+            owning_node_id: oid,
+            owning_prefix_range: orng,
+            served_by: self.state.cfg.node_id.clone(),
+            is_local: my.owns(&token),
         }))
     }
 }
 
 // ── Server wrapper (mirrors tonic_build output) ────────────────────────────
 
-pub struct GeoRedisServer<T: GeoRedisGrpc> { inner: Arc<T> }
+pub struct GeoRedisServer<T: GeoRedisGrpc> {
+    inner: Arc<T>,
+}
 
 impl<T: GeoRedisGrpc> GeoRedisServer<T> {
-    pub fn new(inner: T) -> Self { Self { inner: Arc::new(inner) } }
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner: Arc::new(inner),
+        }
+    }
 }
 
 impl<T: GeoRedisGrpc> Clone for GeoRedisServer<T> {
-    fn clone(&self) -> Self { Self { inner: self.inner.clone() } }
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl<T: GeoRedisGrpc> tonic::server::NamedService for GeoRedisServer<T> {
@@ -186,10 +293,12 @@ where
     B::Error: Into<StdError> + Send + 'static,
 {
     type Response = http::Response<tonic::body::BoxBody>;
-    type Error    = std::convert::Infallible;
-    type Future   = BoxFuture<Self::Response, Self::Error>;
+    type Error = std::convert::Infallible;
+    type Future = BoxFuture<Self::Response, Self::Error>;
 
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> { Poll::Ready(Ok(())) }
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
 
     fn call(&mut self, req: http::Request<B>) -> Self::Future {
         let inner = self.inner.clone();
@@ -198,70 +307,90 @@ where
                 struct H<T>(Arc<T>);
                 impl<T: GeoRedisGrpc> tonic::server::UnaryService<GrpcGeoEntry> for H<T> {
                     type Response = InsertResponse;
-                    type Future   = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                     fn call(&mut self, r: tonic::Request<GrpcGeoEntry>) -> Self::Future {
-                        let i = self.0.clone(); Box::pin(async move { i.insert(r).await })
+                        let i = self.0.clone();
+                        Box::pin(async move { i.insert(r).await })
                     }
                 }
                 Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
-                        .unary(H(inner), req).await)
+                    Ok(
+                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                            .unary(H(inner), req)
+                            .await,
+                    )
                 })
             }
             "/georedis.v1.GeoRedis/InsertBatch" => {
                 struct H<T>(Arc<T>);
                 impl<T: GeoRedisGrpc> tonic::server::UnaryService<InsertBatchRequest> for H<T> {
                     type Response = InsertResponse;
-                    type Future   = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                     fn call(&mut self, r: tonic::Request<InsertBatchRequest>) -> Self::Future {
-                        let i = self.0.clone(); Box::pin(async move { i.insert_batch(r).await })
+                        let i = self.0.clone();
+                        Box::pin(async move { i.insert_batch(r).await })
                     }
                 }
                 Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
-                        .unary(H(inner), req).await)
+                    Ok(
+                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                            .unary(H(inner), req)
+                            .await,
+                    )
                 })
             }
             "/georedis.v1.GeoRedis/QueryRegion" => {
                 struct H<T>(Arc<T>);
                 impl<T: GeoRedisGrpc> tonic::server::UnaryService<RegionRequest> for H<T> {
                     type Response = GeoEntriesResponse;
-                    type Future   = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                     fn call(&mut self, r: tonic::Request<RegionRequest>) -> Self::Future {
-                        let i = self.0.clone(); Box::pin(async move { i.query_region(r).await })
+                        let i = self.0.clone();
+                        Box::pin(async move { i.query_region(r).await })
                     }
                 }
                 Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
-                        .unary(H(inner), req).await)
+                    Ok(
+                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                            .unary(H(inner), req)
+                            .await,
+                    )
                 })
             }
             "/georedis.v1.GeoRedis/GetCluster" => {
                 struct H<T>(Arc<T>);
                 impl<T: GeoRedisGrpc> tonic::server::UnaryService<Empty> for H<T> {
                     type Response = ClusterResponse;
-                    type Future   = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                     fn call(&mut self, r: tonic::Request<Empty>) -> Self::Future {
-                        let i = self.0.clone(); Box::pin(async move { i.get_cluster(r).await })
+                        let i = self.0.clone();
+                        Box::pin(async move { i.get_cluster(r).await })
                     }
                 }
                 Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
-                        .unary(H(inner), req).await)
+                    Ok(
+                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                            .unary(H(inner), req)
+                            .await,
+                    )
                 })
             }
             "/georedis.v1.GeoRedis/TraceCoordinate" => {
                 struct H<T>(Arc<T>);
                 impl<T: GeoRedisGrpc> tonic::server::UnaryService<TraceRequest> for H<T> {
                     type Response = TraceResponse;
-                    type Future   = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                     fn call(&mut self, r: tonic::Request<TraceRequest>) -> Self::Future {
-                        let i = self.0.clone(); Box::pin(async move { i.trace_coordinate(r).await })
+                        let i = self.0.clone();
+                        Box::pin(async move { i.trace_coordinate(r).await })
                     }
                 }
                 Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
-                        .unary(H(inner), req).await)
+                    Ok(
+                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                            .unary(H(inner), req)
+                            .await,
+                    )
                 })
             }
             _ => Box::pin(async move {

@@ -21,10 +21,10 @@ use std::{
 
 use anyhow::Result;
 use clap::Parser;
-use proxima::{GeoEntry, GeoTrie};
 use hdrhistogram::Histogram;
-use rand::{Rng, SeedableRng};
+use proxima::{GeoEntry, GeoTrie};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use redis::{aio::ConnectionManager, AsyncCommands};
 use s2::{cap::Cap, latlng::LatLng, point::Point, region::RegionCoverer, s1};
 use serde_json::json;
@@ -33,7 +33,7 @@ use serde_json::json;
 
 #[derive(Parser, Debug)]
 #[command(
-    name  = "proxima-loadtest",
+    name = "proxima-loadtest",
     about = "Production-scale load test: parallel writers + readers against a live Redis"
 )]
 struct Args {
@@ -78,8 +78,8 @@ struct Args {
 #[derive(Clone, Debug)]
 struct ShardSpec {
     prefix_start: String,
-    prefix_end:   String,
-    redis_url:    String,
+    prefix_end: String,
+    redis_url: String,
 }
 
 impl ShardSpec {
@@ -91,17 +91,20 @@ impl ShardSpec {
         }
         // Handle redis:// URLs that contain colons — rejoin from index 2
         let url_start = s.find(':').unwrap() + 1;
-        let url_start = s[url_start..].find(':').map(|i| url_start + i + 1).unwrap_or(s.len());
+        let url_start = s[url_start..]
+            .find(':')
+            .map(|i| url_start + i + 1)
+            .unwrap_or(s.len());
         Ok(Self {
             prefix_start: parts[0].to_string(),
-            prefix_end:   parts[1].to_string(),
-            redis_url:    s[url_start..].to_string(),
+            prefix_end: parts[1].to_string(),
+            redis_url: s[url_start..].to_string(),
         })
     }
 
     fn owns(&self, token: &str) -> bool {
         let ge = self.prefix_start.is_empty() || token >= self.prefix_start.as_str();
-        let lt = self.prefix_end.is_empty()   || token <  self.prefix_end.as_str();
+        let lt = self.prefix_end.is_empty() || token < self.prefix_end.as_str();
         ge && lt
     }
 }
@@ -109,26 +112,26 @@ impl ShardSpec {
 // ── Shared metrics ────────────────────────────────────────────────────────
 
 struct Metrics {
-    write_hist:     Mutex<Histogram<u64>>,
-    read_hist:      Mutex<Histogram<u64>>,
-    write_ops:      AtomicU64,
+    write_hist: Mutex<Histogram<u64>>,
+    read_hist: Mutex<Histogram<u64>>,
+    write_ops: AtomicU64,
     write_aircraft: AtomicU64,
-    read_ops:       AtomicU64,
-    read_misses:    AtomicU64,
+    read_ops: AtomicU64,
+    read_misses: AtomicU64,
     /// Per-shard write counts (index matches shards Vec or 0 for single-shard mode)
-    shard_writes:   Vec<AtomicU64>,
+    shard_writes: Vec<AtomicU64>,
 }
 
 impl Metrics {
     fn new(num_shards: usize) -> Arc<Self> {
         Arc::new(Self {
-            write_hist:     Mutex::new(Histogram::new(3).expect("histogram")),
-            read_hist:      Mutex::new(Histogram::new(3).expect("histogram")),
-            write_ops:      AtomicU64::new(0),
+            write_hist: Mutex::new(Histogram::new(3).expect("histogram")),
+            read_hist: Mutex::new(Histogram::new(3).expect("histogram")),
+            write_ops: AtomicU64::new(0),
             write_aircraft: AtomicU64::new(0),
-            read_ops:       AtomicU64::new(0),
-            read_misses:    AtomicU64::new(0),
-            shard_writes:   (0..num_shards.max(1)).map(|_| AtomicU64::new(0)).collect(),
+            read_ops: AtomicU64::new(0),
+            read_misses: AtomicU64::new(0),
+            shard_writes: (0..num_shards.max(1)).map(|_| AtomicU64::new(0)).collect(),
         })
     }
 
@@ -147,7 +150,9 @@ impl Metrics {
     fn record_read(&self, us: u64, count: usize) {
         self.read_hist.lock().unwrap().record(us.max(1)).ok();
         self.read_ops.fetch_add(1, Relaxed);
-        if count == 0 { self.read_misses.fetch_add(1, Relaxed); }
+        if count == 0 {
+            self.read_misses.fetch_add(1, Relaxed);
+        }
     }
 }
 
@@ -159,17 +164,22 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Parse optional multi-shard configuration
-    let shards: Vec<ShardSpec> = args.shards.as_deref()
-        .map(|s| s.split(',').filter(|p| !p.is_empty())
-            .map(|spec| ShardSpec::parse(spec).expect("invalid shard spec"))
-            .collect())
+    let shards: Vec<ShardSpec> = args
+        .shards
+        .as_deref()
+        .map(|s| {
+            s.split(',')
+                .filter(|p| !p.is_empty())
+                .map(|spec| ShardSpec::parse(spec).expect("invalid shard spec"))
+                .collect()
+        })
         .unwrap_or_default();
 
     let is_sharded = !shards.is_empty();
 
     print_header(&args, &shards);
 
-    let metrics   = Metrics::new(shards.len());
+    let metrics = Metrics::new(shards.len());
     let stop_flag = Arc::new(AtomicBool::new(false));
     let mut handles = Vec::new();
 
@@ -179,31 +189,37 @@ async fn main() -> Result<()> {
             let mut v = Vec::new();
             for s in &shards {
                 let client = redis::Client::open(s.redis_url.as_str())?;
-                v.push(ConnectionManager::new(client).await
-                    .map_err(|e| anyhow::anyhow!("Shard Redis {}: {e}", s.redis_url))?);
+                v.push(
+                    ConnectionManager::new(client)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Shard Redis {}: {e}", s.redis_url))?,
+                );
             }
             v
         };
         let shard_conns = Arc::new(shard_conns);
 
         for worker_id in 0..args.writers {
-            let conns    = Arc::clone(&shard_conns);
+            let conns = Arc::clone(&shard_conns);
             let shards_c = shards.clone();
-            let m        = Arc::clone(&metrics);
-            let stop     = Arc::clone(&stop_flag);
+            let m = Arc::clone(&metrics);
+            let stop = Arc::clone(&stop_flag);
             let batch_sz = args.batch_size;
             let chunk_sz = args.chunk_size;
             let s2_level = args.s2_level;
             handles.push(tokio::spawn(async move {
-                sharded_writer_task(worker_id, conns, shards_c, m, stop, batch_sz, chunk_sz, s2_level).await;
+                sharded_writer_task(
+                    worker_id, conns, shards_c, m, stop, batch_sz, chunk_sz, s2_level,
+                )
+                .await;
             }));
         }
 
         // Readers query a random shard
         for _ in 0..args.readers {
-            let conns    = Arc::clone(&shard_conns);
-            let m        = Arc::clone(&metrics);
-            let stop     = Arc::clone(&stop_flag);
+            let conns = Arc::clone(&shard_conns);
+            let m = Arc::clone(&metrics);
+            let stop = Arc::clone(&stop_flag);
             let s2_level = args.s2_level;
             handles.push(tokio::spawn(async move {
                 sharded_reader_task(conns, m, stop, s2_level).await;
@@ -211,14 +227,15 @@ async fn main() -> Result<()> {
         }
     } else {
         // ── Single-node mode (original behaviour) ─────────────────────────
-        let client   = redis::Client::open(args.redis_url.as_str())?;
-        let conn_mgr = ConnectionManager::new(client).await
-            .map_err(|e| anyhow::anyhow!("Redis: {e}\nStart Redis: docker run -d -p 6379:6379 redis:7-alpine"))?;
+        let client = redis::Client::open(args.redis_url.as_str())?;
+        let conn_mgr = ConnectionManager::new(client).await.map_err(|e| {
+            anyhow::anyhow!("Redis: {e}\nStart Redis: docker run -d -p 6379:6379 redis:7-alpine")
+        })?;
 
         for worker_id in 0..args.writers {
-            let conn     = conn_mgr.clone();
-            let m        = Arc::clone(&metrics);
-            let stop     = Arc::clone(&stop_flag);
+            let conn = conn_mgr.clone();
+            let m = Arc::clone(&metrics);
+            let stop = Arc::clone(&stop_flag);
             let batch_sz = args.batch_size;
             let chunk_sz = args.chunk_size;
             let s2_level = args.s2_level;
@@ -227,9 +244,9 @@ async fn main() -> Result<()> {
             }));
         }
         for _ in 0..args.readers {
-            let conn     = conn_mgr.clone();
-            let m        = Arc::clone(&metrics);
-            let stop     = Arc::clone(&stop_flag);
+            let conn = conn_mgr.clone();
+            let m = Arc::clone(&metrics);
+            let stop = Arc::clone(&stop_flag);
             let s2_level = args.s2_level;
             handles.push(tokio::spawn(async move {
                 reader_task(conn, m, stop, s2_level).await;
@@ -239,29 +256,40 @@ async fn main() -> Result<()> {
 
     // Progress ticker
     {
-        let m    = Arc::clone(&metrics);
+        let m = Arc::clone(&metrics);
         let stop = Arc::clone(&stop_flag);
-        let t0   = Instant::now();
-        let sh   = shards.clone();
+        let t0 = Instant::now();
+        let sh = shards.clone();
         handles.push(tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(5));
             ticker.tick().await;
             loop {
                 ticker.tick().await;
-                if stop.load(Relaxed) { break; }
+                if stop.load(Relaxed) {
+                    break;
+                }
                 let secs = t0.elapsed().as_secs().max(1);
-                let wo   = m.write_ops.load(Relaxed);
-                let ro   = m.read_ops.load(Relaxed);
-                let wa   = m.write_aircraft.load(Relaxed);
-                print!("[{:3}s] writes {:5} ({:.1}/s, {:>9} aircraft/s)  reads {:6} ({:.1}/s)",
-                    secs, wo, wo as f64 / secs as f64, fmt_num(wa / secs),
-                    ro, ro as f64 / secs as f64);
+                let wo = m.write_ops.load(Relaxed);
+                let ro = m.read_ops.load(Relaxed);
+                let wa = m.write_aircraft.load(Relaxed);
+                print!(
+                    "[{:3}s] writes {:5} ({:.1}/s, {:>9} aircraft/s)  reads {:6} ({:.1}/s)",
+                    secs,
+                    wo,
+                    wo as f64 / secs as f64,
+                    fmt_num(wa / secs),
+                    ro,
+                    ro as f64 / secs as f64
+                );
                 if !sh.is_empty() {
                     print!("  shards [");
                     for (i, s) in sh.iter().enumerate() {
                         let sw = m.shard_writes.get(i).map(|c| c.load(Relaxed)).unwrap_or(0);
-                        let range = format!("{}-{}", s.prefix_start.chars().next().unwrap_or('∅'),
-                                                      s.prefix_end.chars().next().unwrap_or('∞'));
+                        let range = format!(
+                            "{}-{}",
+                            s.prefix_start.chars().next().unwrap_or('∅'),
+                            s.prefix_end.chars().next().unwrap_or('∞')
+                        );
                         print!(" {range}:{sw}");
                     }
                     print!(" ]");
@@ -274,7 +302,9 @@ async fn main() -> Result<()> {
     tokio::time::sleep(Duration::from_secs(args.duration_secs)).await;
     stop_flag.store(true, Relaxed);
     tokio::time::sleep(Duration::from_millis(300)).await;
-    for h in handles { h.abort(); }
+    for h in handles {
+        h.abort();
+    }
 
     print_results(&args, &metrics, &shards);
     Ok(())
@@ -287,18 +317,18 @@ async fn main() -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 async fn sharded_writer_task(
-    id:       usize,
-    conns:    Arc<Vec<ConnectionManager>>,
-    shards:   Vec<ShardSpec>,
-    metrics:  Arc<Metrics>,
-    stop:     Arc<AtomicBool>,
+    id: usize,
+    conns: Arc<Vec<ConnectionManager>>,
+    shards: Vec<ShardSpec>,
+    metrics: Arc<Metrics>,
+    stop: Arc<AtomicBool>,
     batch_sz: usize,
     chunk_sz: usize,
     s2_level: u8,
 ) {
-    let mut rng   = StdRng::from_entropy();
-    let prefix    = "proxima";
-    const TTL: u64  = 120;
+    let mut rng = StdRng::from_entropy();
+    let prefix = "proxima";
+    const TTL: u64 = 120;
     const EXPIRE: i64 = 120;
 
     while !stop.load(Relaxed) {
@@ -310,8 +340,9 @@ async fn sharded_writer_task(
             let lat = rng.gen_range(-85.0_f64..85.0);
             let lon = rng.gen_range(-180.0_f64..180.0);
             let entry = GeoEntry {
-                id:  format!("sw{id}-{i}"),
-                lat, lon,
+                id: format!("sw{id}-{i}"),
+                lat,
+                lon,
                 payload: json!({ "callsign": format!("SW{id}{i:04}"),
                                  "altitude": rng.gen_range(0.0_f64..12_000.0) }),
                 written_at: 0,
@@ -327,7 +358,9 @@ async fn sharded_writer_task(
         let mut total_ok = 0u64;
 
         for (shard_idx, entries) in by_shard.iter().enumerate() {
-            if entries.is_empty() { continue; }
+            if entries.is_empty() {
+                continue;
+            }
             let mut conn = conns[shard_idx].clone();
             let mut ok = true;
 
@@ -336,9 +369,9 @@ async fn sharded_writer_task(
                 pipe.atomic();
                 for entry in chunk {
                     let token = trie.cell_token(entry.lat, entry.lon);
-                    let ak    = format!("{prefix}:entity:{}", entry.id);
-                    let ck    = format!("{prefix}:cell:{token}");
-                    let js    = serde_json::to_string(entry).unwrap_or_default();
+                    let ak = format!("{prefix}:entity:{}", entry.id);
+                    let ck = format!("{prefix}:cell:{token}");
+                    let js = serde_json::to_string(entry).unwrap_or_default();
                     pipe.set_ex(&ak, &js, TTL).ignore();
                     pipe.sadd(&ck, &entry.id).ignore();
                     pipe.expire(&ck, EXPIRE).ignore();
@@ -365,33 +398,41 @@ async fn sharded_writer_task(
 // Queries a random shard — a real viewport query would fan-out to 1–3 shards.
 
 async fn sharded_reader_task(
-    conns:    Arc<Vec<ConnectionManager>>,
-    metrics:  Arc<Metrics>,
-    stop:     Arc<AtomicBool>,
+    conns: Arc<Vec<ConnectionManager>>,
+    metrics: Arc<Metrics>,
+    stop: Arc<AtomicBool>,
     s2_level: u8,
 ) {
-    let mut rng  = StdRng::from_entropy();
-    let prefix   = "proxima";
+    let mut rng = StdRng::from_entropy();
+    let prefix = "proxima";
 
     while !stop.load(Relaxed) {
         let tokens = random_viewport_tokens(&mut rng, s2_level);
-        if tokens.is_empty() { continue; }
+        if tokens.is_empty() {
+            continue;
+        }
 
         // Route to a random shard connection (demonstrates fan-out)
         let shard_idx = rng.gen_range(0..conns.len());
         let start = Instant::now();
         let mut conn = conns[shard_idx].clone();
 
-        let cell_keys: Vec<String> = tokens.iter()
-            .map(|t| format!("{prefix}:cell:{t}")).collect();
+        let cell_keys: Vec<String> = tokens
+            .iter()
+            .map(|t| format!("{prefix}:cell:{t}"))
+            .collect();
         let ids: Vec<String> = match conn.sunion(cell_keys).await {
-            Ok(v) => v, Err(_) => continue,
+            Ok(v) => v,
+            Err(_) => continue,
         };
         if !ids.is_empty() {
             let mut pipe = redis::pipe();
-            for id in &ids { pipe.get(format!("{prefix}:aircraft:{id}")); }
+            for id in &ids {
+                pipe.get(format!("{prefix}:aircraft:{id}"));
+            }
             let _: Vec<Option<String>> = match pipe.query_async(&mut conn).await {
-                Ok(v) => v, Err(_) => continue,
+                Ok(v) => v,
+                Err(_) => continue,
             };
         }
         metrics.record_read(start.elapsed().as_micros() as u64, ids.len());
@@ -401,17 +442,17 @@ async fn sharded_reader_task(
 // ── Writer task ───────────────────────────────────────────────────────────
 
 async fn writer_task(
-    id:       usize,
+    id: usize,
     mut conn: ConnectionManager,
-    metrics:  Arc<Metrics>,
-    stop:     Arc<AtomicBool>,
+    metrics: Arc<Metrics>,
+    stop: Arc<AtomicBool>,
     batch_sz: usize,
     chunk_sz: usize,
     s2_level: u8,
 ) {
-    let mut rng    = StdRng::from_entropy();
-    let prefix     = "proxima";
-    const TTL: u64  = 120;
+    let mut rng = StdRng::from_entropy();
+    let prefix = "proxima";
+    const TTL: u64 = 120;
     const EXPIRE: i64 = 120;
 
     while !stop.load(Relaxed) {
@@ -421,8 +462,9 @@ async fn writer_task(
             let lat = rng.gen_range(-85.0_f64..85.0);
             let lon = rng.gen_range(-180.0_f64..180.0);
             trie.insert(GeoEntry {
-                id:  format!("w{id}-{i}"),
-                lat, lon,
+                id: format!("w{id}-{i}"),
+                lat,
+                lon,
                 payload: json!({
                     "callsign": format!("W{id}{i:04}"),
                     "altitude": rng.gen_range(0.0_f64..12_000.0),
@@ -434,17 +476,17 @@ async fn writer_task(
         }
 
         let entries = trie.all_entries();
-        let start   = Instant::now();
-        let mut ok  = true;
+        let start = Instant::now();
+        let mut ok = true;
 
         for chunk in entries.chunks(chunk_sz) {
             let mut pipe = redis::pipe();
             pipe.atomic();
             for entry in chunk {
                 let token = trie.cell_token(entry.lat, entry.lon);
-                let ak    = format!("{prefix}:aircraft:{}", entry.id);
-                let ck    = format!("{prefix}:cell:{token}");
-                let json  = serde_json::to_string(entry).unwrap_or_default();
+                let ak = format!("{prefix}:aircraft:{}", entry.id);
+                let ck = format!("{prefix}:cell:{token}");
+                let json = serde_json::to_string(entry).unwrap_or_default();
                 pipe.set_ex(&ak, &json, TTL).ignore();
                 pipe.sadd(&ck, &entry.id).ignore();
                 pipe.expire(&ck, EXPIRE).ignore();
@@ -465,19 +507,22 @@ async fn writer_task(
 
 async fn reader_task(
     mut conn: ConnectionManager,
-    metrics:  Arc<Metrics>,
-    stop:     Arc<AtomicBool>,
+    metrics: Arc<Metrics>,
+    stop: Arc<AtomicBool>,
     s2_level: u8,
 ) {
-    let mut rng  = StdRng::from_entropy();
-    let prefix   = "proxima";
+    let mut rng = StdRng::from_entropy();
+    let prefix = "proxima";
 
     while !stop.load(Relaxed) {
         let tokens = random_viewport_tokens(&mut rng, s2_level);
-        if tokens.is_empty() { continue; }
+        if tokens.is_empty() {
+            continue;
+        }
 
-        let start     = Instant::now();
-        let cell_keys: Vec<String> = tokens.iter()
+        let start = Instant::now();
+        let cell_keys: Vec<String> = tokens
+            .iter()
             .map(|t| format!("{prefix}:cell:{t}"))
             .collect();
 
@@ -509,16 +554,22 @@ async fn reader_task(
 
 /// Returns S2 cell tokens covering a random ~800 km radius viewport.
 fn random_viewport_tokens(rng: &mut impl Rng, s2_level: u8) -> Vec<String> {
-    let lat        = rng.gen_range(-70.0_f64..70.0);
-    let lon        = rng.gen_range(-180.0_f64..180.0);
+    let lat = rng.gen_range(-70.0_f64..70.0);
+    let lon = rng.gen_range(-180.0_f64..180.0);
     let radius_rad = (800_000.0_f64 / 6_371_000.0).min(PI); // ~800 km
 
-    let center  = Point::from(LatLng::new(s1::Deg(lat).into(), s1::Deg(lon).into()));
+    let center = Point::from(LatLng::new(s1::Deg(lat).into(), s1::Deg(lon).into()));
     let cap_angle: s1::angle::Angle = s1::Rad(radius_rad).into();
-    let cap     = Cap::from_center_angle(&center, &cap_angle);
-    let coverer = RegionCoverer { min_level: s2_level, max_level: s2_level, level_mod: 1, max_cells: 50 };
+    let cap = Cap::from_center_angle(&center, &cap_angle);
+    let coverer = RegionCoverer {
+        min_level: s2_level,
+        max_level: s2_level,
+        level_mod: 1,
+        max_cells: 50,
+    };
 
-    coverer.covering(&cap)
+    coverer
+        .covering(&cap)
         .0
         .iter()
         .map(|c| {
@@ -546,55 +597,97 @@ fn print_header(a: &Args, shards: &[ShardSpec]) {
             println!("  Shard {i}    : {range:16} → {}", s.redis_url);
         }
     }
-    println!("  Writers    : {} tasks × {} aircraft/batch", a.writers, a.batch_size);
+    println!(
+        "  Writers    : {} tasks × {} aircraft/batch",
+        a.writers, a.batch_size
+    );
     println!("  Readers    : {} concurrent viewport queries", a.readers);
     println!("  Duration   : {}s", a.duration_secs);
-    println!("  S2 level   : {} (cell ≈ {})", a.s2_level, s2_level_desc(a.s2_level));
+    println!(
+        "  S2 level   : {} (cell ≈ {})",
+        a.s2_level,
+        s2_level_desc(a.s2_level)
+    );
     println!();
     println!("  [Progress every 5s]\n");
 }
 
 fn print_results(a: &Args, m: &Metrics, shards: &[ShardSpec]) {
-    let dur  = a.duration_secs as f64;
-    let wo   = m.write_ops.load(Relaxed);
-    let wa   = m.write_aircraft.load(Relaxed);
-    let ro   = m.read_ops.load(Relaxed);
+    let dur = a.duration_secs as f64;
+    let wo = m.write_ops.load(Relaxed);
+    let wa = m.write_aircraft.load(Relaxed);
+    let ro = m.read_ops.load(Relaxed);
     let miss = m.read_misses.load(Relaxed);
-    let wh   = m.write_hist.lock().unwrap();
-    let rh   = m.read_hist.lock().unwrap();
+    let wh = m.write_hist.lock().unwrap();
+    let rh = m.read_hist.lock().unwrap();
 
     println!();
     println!("╔══════════════════════════════════════════════════════════╗");
-    println!("║  RESULTS  ({} writers / {} readers / {}s)", a.writers, a.readers, a.duration_secs);
+    println!(
+        "║  RESULTS  ({} writers / {} readers / {}s)",
+        a.writers, a.readers, a.duration_secs
+    );
     println!("╠══════════════════════════════════════════════════════════╣");
     println!("║  WRITES");
     println!("║    batches    : {}  ({:.1} batch/s)", wo, wo as f64 / dur);
-    println!("║    aircraft   : {}  ({} aircraft/s)", fmt_num(wa), fmt_num((wa as f64/dur) as u64));
+    println!(
+        "║    aircraft   : {}  ({} aircraft/s)",
+        fmt_num(wa),
+        fmt_num((wa as f64 / dur) as u64)
+    );
     if !wh.is_empty() {
-        println!("║    p50 {:.1}ms  p95 {:.1}ms  p99 {:.1}ms  max {:.1}ms",
-            pct(&wh,0.50), pct(&wh,0.95), pct(&wh,0.99), wh.max() as f64/1000.0);
-    } else { println!("║    (no samples)"); }
+        println!(
+            "║    p50 {:.1}ms  p95 {:.1}ms  p99 {:.1}ms  max {:.1}ms",
+            pct(&wh, 0.50),
+            pct(&wh, 0.95),
+            pct(&wh, 0.99),
+            wh.max() as f64 / 1000.0
+        );
+    } else {
+        println!("║    (no samples)");
+    }
 
     if !shards.is_empty() {
         println!("║");
         println!("║  GEOGRAPHIC ROUTING (proves distributed tree)");
-        let total = m.shard_writes.iter().map(|c| c.load(Relaxed)).sum::<u64>().max(1);
+        let total = m
+            .shard_writes
+            .iter()
+            .map(|c| c.load(Relaxed))
+            .sum::<u64>()
+            .max(1);
         for (i, s) in shards.iter().enumerate() {
-            let sw  = m.shard_writes.get(i).map(|c| c.load(Relaxed)).unwrap_or(0);
+            let sw = m.shard_writes.get(i).map(|c| c.load(Relaxed)).unwrap_or(0);
             let pct = sw as f64 / total as f64 * 100.0;
             let bar = "█".repeat((pct / 2.5) as usize);
             let rng = format!("[{}, {})", s.prefix_start, s.prefix_end);
-            println!("║    shard-{i} {rng:12}: {:>8}  ({pct:5.1}%)  {bar}", fmt_num(sw));
+            println!(
+                "║    shard-{i} {rng:12}: {:>8}  ({pct:5.1}%)  {bar}",
+                fmt_num(sw)
+            );
         }
     }
 
     println!("║");
     println!("║  READS");
-    println!("║    queries    : {}  ({:.1} query/s)", ro, ro as f64/dur);
-    println!("║    cache miss : {} ({:.1}%)", miss, if ro>0 { miss as f64/ro as f64*100.0 } else { 0.0 });
+    println!("║    queries    : {}  ({:.1} query/s)", ro, ro as f64 / dur);
+    println!(
+        "║    cache miss : {} ({:.1}%)",
+        miss,
+        if ro > 0 {
+            miss as f64 / ro as f64 * 100.0
+        } else {
+            0.0
+        }
+    );
     if !rh.is_empty() {
-        println!("║    p50 {:.2}ms  p95 {:.2}ms  p99 {:.2}ms  max {:.2}ms",
-            pct(&rh,0.50), pct(&rh,0.95), pct(&rh,0.99), rh.max() as f64/1000.0);
+        println!(
+            "║    p50 {:.2}ms  p95 {:.2}ms  p99 {:.2}ms  max {:.2}ms",
+            pct(&rh, 0.50),
+            pct(&rh, 0.95),
+            pct(&rh, 0.99),
+            rh.max() as f64 / 1000.0
+        );
     }
     println!("╚══════════════════════════════════════════════════════════╝");
     println!();
@@ -613,7 +706,8 @@ fn fmt_num(n: u64) -> String {
     // Insert thousands separators
     let s = n.to_string();
     let chars: Vec<char> = s.chars().rev().collect();
-    let grouped: String = chars.chunks(3)
+    let grouped: String = chars
+        .chunks(3)
         .map(|c| c.iter().collect::<String>())
         .collect::<Vec<_>>()
         .join(",");
@@ -622,11 +716,11 @@ fn fmt_num(n: u64) -> String {
 
 fn s2_level_desc(level: u8) -> &'static str {
     match level {
-        1..=5  => "continent scale",
-        6..=8  => "~200–800 km",
+        1..=5 => "continent scale",
+        6..=8 => "~200–800 km",
         9..=10 => "~50–200 km",
         11..=13 => "~5–50 km",
         14..=16 => "~1–5 km",
-        _      => "sub-km",
+        _ => "sub-km",
     }
 }

@@ -1,3 +1,5 @@
+use crate::metar_bulk::{self, BulkMETAR};
+use proxima::GeoTrie;
 /// Spatial aggregation of raw METAR stations into at most `max_clusters`
 /// representative nodes, equally distributed across the globe.
 ///
@@ -16,25 +18,23 @@
 /// The resulting cluster IDs are `"wx:{s2_token}"` — ordinary strings that
 /// the proxima lib handles without any changes (GeoEntry.id is already String).
 use std::collections::HashMap;
-use proxima::GeoTrie;
-use crate::metar_bulk::{self, BulkMETAR};
 
 /// One aggregated weather cluster ready to be inserted into the georedis trie.
 #[derive(Debug, Clone)]
 pub struct Cluster {
     /// Stable ID of the form `"wx:{s2_token_at_chosen_level}"`.
-    pub id:       String,
-    pub lat:      f64,
-    pub lon:      f64,
-    pub temp_c:   Option<f64>,
+    pub id: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub temp_c: Option<f64>,
     pub wind_spd: Option<f64>,
     pub wind_dir: Option<u16>,
-    pub wx:       String,
-    pub sky:      String,
+    pub wx: String,
+    pub sky: String,
     pub wmo_code: u8,
-    pub flt_cat:  String,
+    pub flt_cat: String,
     /// Number of raw METAR stations that contributed to this cluster.
-    pub count:    usize,
+    pub count: usize,
 }
 
 /// Aggregate `stations` into at most `max_clusters` spatial clusters.
@@ -43,15 +43,21 @@ pub struct Cluster {
 /// tuning via the `CLUSTER_LEVEL` env var).  Otherwise the level is
 /// auto-detected to keep occupied cells ≤ `max_clusters`.
 pub fn aggregate(
-    stations:    &[BulkMETAR],
+    stations: &[BulkMETAR],
     max_clusters: usize,
-    force_level:  Option<u8>,
+    force_level: Option<u8>,
 ) -> Vec<Cluster> {
-    if stations.is_empty() { return vec![]; }
+    if stations.is_empty() {
+        return vec![];
+    }
 
     let level = force_level.unwrap_or_else(|| auto_level(stations, max_clusters));
-    tracing::info!("Aggregating {} stations into S2 level-{} clusters (max {})",
-        stations.len(), level, max_clusters);
+    tracing::info!(
+        "Aggregating {} stations into S2 level-{} clusters (max {})",
+        stations.len(),
+        level,
+        max_clusters
+    );
 
     let helper = GeoTrie::new(level);
 
@@ -62,7 +68,8 @@ pub fn aggregate(
         cells.entry(token).or_default().push(s);
     }
 
-    let clusters: Vec<Cluster> = cells.into_iter()
+    let clusters: Vec<Cluster> = cells
+        .into_iter()
         .map(|(token, members)| build_cluster(token, &members))
         .collect();
 
@@ -110,17 +117,33 @@ fn build_cluster(token: String, members: &[&BulkMETAR]) -> Cluster {
     let wind_dir = dirs.get(dirs.len() / 2).copied();
 
     // Most common non-empty wx_string; fall back to sky cover
-    let wx  = modal_string(members.iter().map(|s| s.wx.as_str()).filter(|s| !s.is_empty()));
-    let sky = modal_string(members.iter().map(|s| s.sky.as_str()).filter(|s| !s.is_empty()));
+    let wx = modal_string(
+        members
+            .iter()
+            .map(|s| s.wx.as_str())
+            .filter(|s| !s.is_empty()),
+    );
+    let sky = modal_string(
+        members
+            .iter()
+            .map(|s| s.sky.as_str())
+            .filter(|s| !s.is_empty()),
+    );
 
     // Most common flight category
-    let flt_cat = modal_string(members.iter().map(|s| s.flt_cat.as_str()).filter(|s| !s.is_empty()));
+    let flt_cat = modal_string(
+        members
+            .iter()
+            .map(|s| s.flt_cat.as_str())
+            .filter(|s| !s.is_empty()),
+    );
 
     let wmo_code = metar_bulk::wx_to_wmo(&wx, &sky);
 
     Cluster {
         id: format!("wx:{token}"),
-        lat, lon,
+        lat,
+        lon,
         temp_c,
         wind_spd,
         wind_dir,
@@ -135,8 +158,11 @@ fn build_cluster(token: String, members: &[&BulkMETAR]) -> Cluster {
 /// Returns the most common non-empty string from an iterator.
 fn modal_string<'a>(iter: impl Iterator<Item = &'a str>) -> String {
     let mut counts: HashMap<&str, usize> = HashMap::new();
-    for s in iter { *counts.entry(s).or_insert(0) += 1; }
-    counts.into_iter()
+    for s in iter {
+        *counts.entry(s).or_insert(0) += 1;
+    }
+    counts
+        .into_iter()
         .max_by_key(|(_, c)| *c)
         .map(|(k, _)| k.to_string())
         .unwrap_or_default()

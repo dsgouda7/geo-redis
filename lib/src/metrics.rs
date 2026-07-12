@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
 use hdrhistogram::Histogram;
 use serde::Serialize;
+use std::sync::{Arc, Mutex};
 
 /// Per-instance latency tracker backed by HDR histograms.
 ///
@@ -14,7 +14,7 @@ pub struct Metrics {
     /// Histogram for `persist_trie` call durations (microseconds).
     write_hist: Mutex<Histogram<u64>>,
     /// Histogram for `query_region` call durations (microseconds).
-    read_hist:  Mutex<Histogram<u64>>,
+    read_hist: Mutex<Histogram<u64>>,
 }
 
 impl std::fmt::Debug for Metrics {
@@ -28,12 +28,10 @@ impl Default for Metrics {
         Self {
             // 1 µs low bound, 60 s high bound, 3 significant figures
             write_hist: Mutex::new(
-                Histogram::<u64>::new_with_bounds(1, 60_000_000, 3)
-                    .expect("HDR histogram init"),
+                Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).expect("HDR histogram init"),
             ),
             read_hist: Mutex::new(
-                Histogram::<u64>::new_with_bounds(1, 60_000_000, 3)
-                    .expect("HDR histogram init"),
+                Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).expect("HDR histogram init"),
             ),
         }
     }
@@ -65,18 +63,18 @@ impl Metrics {
         let wh = self.write_hist.lock().unwrap();
         let rh = self.read_hist.lock().unwrap();
         MetricsSnapshot {
-            write_count:   wh.len(),
-            write_p50_us:  wh.value_at_quantile(0.50),
-            write_p95_us:  wh.value_at_quantile(0.95),
-            write_p99_us:  wh.value_at_quantile(0.99),
+            write_count: wh.len(),
+            write_p50_us: wh.value_at_quantile(0.50),
+            write_p95_us: wh.value_at_quantile(0.95),
+            write_p99_us: wh.value_at_quantile(0.99),
             write_p999_us: wh.value_at_quantile(0.999),
-            write_max_us:  wh.max(),
-            read_count:    rh.len(),
-            read_p50_us:   rh.value_at_quantile(0.50),
-            read_p95_us:   rh.value_at_quantile(0.95),
-            read_p99_us:   rh.value_at_quantile(0.99),
-            read_p999_us:  rh.value_at_quantile(0.999),
-            read_max_us:   rh.max(),
+            write_max_us: wh.max(),
+            read_count: rh.len(),
+            read_p50_us: rh.value_at_quantile(0.50),
+            read_p95_us: rh.value_at_quantile(0.95),
+            read_p99_us: rh.value_at_quantile(0.99),
+            read_p999_us: rh.value_at_quantile(0.999),
+            read_max_us: rh.max(),
         }
     }
 }
@@ -88,19 +86,19 @@ impl Metrics {
 #[derive(Debug, Serialize, Clone)]
 pub struct MetricsSnapshot {
     // ── Write (persist_trie) ─────────────────────────────────────────────
-    pub write_count:   u64,
-    pub write_p50_us:  u64,
-    pub write_p95_us:  u64,
-    pub write_p99_us:  u64,
+    pub write_count: u64,
+    pub write_p50_us: u64,
+    pub write_p95_us: u64,
+    pub write_p99_us: u64,
     pub write_p999_us: u64,
-    pub write_max_us:  u64,
+    pub write_max_us: u64,
     // ── Read (query_region) ──────────────────────────────────────────────
-    pub read_count:    u64,
-    pub read_p50_us:   u64,
-    pub read_p95_us:   u64,
-    pub read_p99_us:   u64,
-    pub read_p999_us:  u64,
-    pub read_max_us:   u64,
+    pub read_count: u64,
+    pub read_p50_us: u64,
+    pub read_p95_us: u64,
+    pub read_p99_us: u64,
+    pub read_p999_us: u64,
+    pub read_max_us: u64,
 }
 
 impl MetricsSnapshot {

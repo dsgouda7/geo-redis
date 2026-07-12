@@ -55,9 +55,9 @@ CREATE TABLE IF NOT EXISTS snapshot_log (
 /// Derive Serialize/Deserialize so it can be sent as JSON over HTTP.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct SnapshotEntry {
-    pub id:          String,
-    pub json:        String,
-    pub token:       String,
+    pub id: String,
+    pub json: String,
+    pub token: String,
     /// Unix timestamp when this entry was snapshotted.
     /// Used during restore to skip entries that would have already expired
     /// under the configured `entity_ttl_secs`.
@@ -74,16 +74,18 @@ impl Snapshot {
         let conn = rusqlite::Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
         tracing::info!("Snapshot store opened at {path}");
-        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 
     /// Atomically replaces the entire snapshot with `entries`.
     /// Uses a single WAL transaction — ~11k entries completes in <200 ms.
     pub async fn save(&self, entries: Vec<SnapshotEntry>) -> Result<u64> {
-        let conn   = Arc::clone(&self.conn);
-        let count  = entries.len() as i64;
-        let now    = unix_now();
-        let t0     = std::time::Instant::now();
+        let conn = Arc::clone(&self.conn);
+        let count = entries.len() as i64;
+        let now = unix_now();
+        let t0 = std::time::Instant::now();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
             let mut guard = conn.blocking_lock();
@@ -119,7 +121,7 @@ impl Snapshot {
     /// to the new shard's snapshot store. Existing entries (from the new
     /// shard's own periodic snapshots) are preserved.
     pub async fn append(&self, entries: Vec<SnapshotEntry>) -> Result<u64> {
-        let conn  = Arc::clone(&self.conn);
+        let conn = Arc::clone(&self.conn);
         let count = entries.len() as i64;
         tokio::task::spawn_blocking(move || -> Result<()> {
             let mut guard = conn.blocking_lock();
@@ -147,16 +149,17 @@ impl Snapshot {
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || -> Result<Vec<SnapshotEntry>> {
             let guard = conn.blocking_lock();
-            let mut stmt = guard.prepare(
-                "SELECT id,json,token,snapshotted FROM entity_snapshot ORDER BY id",
-            )?;
+            let mut stmt = guard
+                .prepare("SELECT id,json,token,snapshotted FROM entity_snapshot ORDER BY id")?;
             let entries = stmt
-                .query_map([], |r| Ok(SnapshotEntry {
-                    id:          r.get(0)?,
-                    json:        r.get(1)?,
-                    token:       r.get(2)?,
-                    snapshotted: r.get(3)?,
-                }))?
+                .query_map([], |r| {
+                    Ok(SnapshotEntry {
+                        id: r.get(0)?,
+                        json: r.get(1)?,
+                        token: r.get(2)?,
+                        snapshotted: r.get(3)?,
+                    })
+                })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(entries)
         })
@@ -168,9 +171,8 @@ impl Snapshot {
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || -> Result<u64> {
             let guard = conn.blocking_lock();
-            let n: i64 = guard.query_row(
-                "SELECT COUNT(*) FROM entity_snapshot", [], |r| r.get(0),
-            )?;
+            let n: i64 =
+                guard.query_row("SELECT COUNT(*) FROM entity_snapshot", [], |r| r.get(0))?;
             Ok(n as u64)
         })
         .await?

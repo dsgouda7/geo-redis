@@ -4,7 +4,13 @@ use serde_json::json;
 // ── helpers ────────────────────────────────────────────────────────────────
 
 fn entry(id: &str, lat: f64, lon: f64) -> GeoEntry {
-    GeoEntry { id: id.into(), lat, lon, payload: json!({ "test": true }), written_at: 0 }
+    GeoEntry {
+        id: id.into(),
+        lat,
+        lon,
+        payload: json!({ "test": true }),
+        written_at: 0,
+    }
 }
 
 // ── basic correctness ──────────────────────────────────────────────────────
@@ -13,7 +19,7 @@ fn entry(id: &str, lat: f64, lon: f64) -> GeoEntry {
 fn insert_and_exact_query() {
     let mut trie = GeoTrie::new(9);
     trie.insert(entry("abc", 37.7749, -122.4194));
-    let token   = trie.cell_token(37.7749, -122.4194);
+    let token = trie.cell_token(37.7749, -122.4194);
     let results = trie.query_token(&token);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, "abc");
@@ -51,7 +57,7 @@ fn query_tokens_aggregates_multiple_cells() {
     let mut trie = GeoTrie::new(9);
     trie.insert(entry("sf", 37.77, -122.41));
     trie.insert(entry("la", 34.05, -118.24));
-    trie.insert(entry("ny", 40.71,  -74.01));
+    trie.insert(entry("ny", 40.71, -74.01));
 
     let tok_sf = trie.cell_token(37.77, -122.41);
     let tok_la = trie.cell_token(34.05, -118.24);
@@ -75,11 +81,11 @@ fn query_tokens_empty_slice_returns_empty() {
 fn all_entries_round_trips_all_data() {
     let mut trie = GeoTrie::new(9);
     let coords = [
-        ("sydney",   -33.87,  151.21),
-        ("london",    51.51,   -0.13),
-        ("newyork",   40.71,  -74.01),
-        ("tokyo",     35.68,  139.69),
-        ("capetown", -33.93,   18.42),
+        ("sydney", -33.87, 151.21),
+        ("london", 51.51, -0.13),
+        ("newyork", 40.71, -74.01),
+        ("tokyo", 35.68, 139.69),
+        ("capetown", -33.93, 18.42),
     ];
     for (id, lat, lon) in coords {
         trie.insert(entry(id, lat, lon));
@@ -140,7 +146,7 @@ fn prime_meridian_and_equator() {
 #[test]
 fn level_12_fine_separates_distant_points() {
     let trie = GeoTrie::new(12); // ~2 km cells
-    // Eiffel Tower vs Notre-Dame (~3.5 km apart)
+                                 // Eiffel Tower vs Notre-Dame (~3.5 km apart)
     let tok_a = trie.cell_token(48.8584, 2.2945);
     let tok_b = trie.cell_token(48.8606, 2.3376);
     assert_ne!(tok_a, tok_b);
@@ -152,14 +158,14 @@ fn level_12_fine_separates_distant_points() {
 fn payload_preserved_on_query() {
     let mut trie = GeoTrie::new(9);
     trie.insert(GeoEntry {
-        id:      "ua123".into(),
-        lat:     41.97,
-        lon:    -87.91,
+        id: "ua123".into(),
+        lat: 41.97,
+        lon: -87.91,
         payload: json!({ "callsign": "UAL123", "altitude": 10600, "on_ground": false }),
         written_at: 0,
     });
     let tok = trie.cell_token(41.97, -87.91);
-    let r   = trie.query_token(&tok);
+    let r = trie.query_token(&tok);
     assert_eq!(r.len(), 1);
     assert_eq!(r[0].payload["callsign"], "UAL123");
     assert_eq!(r[0].payload["altitude"], 10600);
@@ -187,12 +193,16 @@ fn remove_nonexistent_returns_false() {
 fn remove_prunes_empty_branch_nodes() {
     let mut trie = GeoTrie::new(9);
     trie.insert(entry("lone", 51.5, -0.1));
-    let tok        = trie.cell_token(51.5, -0.1);
+    let tok = trie.cell_token(51.5, -0.1);
     let nodes_before = trie.count_nodes();
     assert!(nodes_before > 1, "should have branch nodes before removal");
     trie.remove_at_token(&tok, "lone");
     // After removing the only entry, the entire branch back to root must be pruned
-    assert_eq!(trie.count_nodes(), 1, "only root node should remain after pruning");
+    assert_eq!(
+        trie.count_nodes(),
+        1,
+        "only root node should remain after pruning"
+    );
     assert!(trie.is_empty());
 }
 
@@ -234,7 +244,10 @@ fn bulk_insert_10k_stable() {
 #[test]
 fn cell_token_is_deterministic() {
     let trie = GeoTrie::new(9);
-    assert_eq!(trie.cell_token(37.7749, -122.4194), trie.cell_token(37.7749, -122.4194));
+    assert_eq!(
+        trie.cell_token(37.7749, -122.4194),
+        trie.cell_token(37.7749, -122.4194)
+    );
 }
 
 #[test]

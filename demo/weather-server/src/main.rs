@@ -5,39 +5,39 @@ mod metar_bulk;
 mod open_meteo;
 mod routes;
 
+use axum::{routing::get, Router};
+use config::Config;
+use proxima::{GeoEntry, GeoTrie, Metrics, RedisStore};
 use std::collections::HashMap;
 use std::sync::Arc;
-use axum::{routing::get, Router};
 use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::CorsLayer;
-use proxima::{GeoEntry, GeoTrie, Metrics, RedisStore};
-use config::Config;
 
 /// Payload for each SSE event dispatched during a streaming cycle.
 #[derive(Clone, serde::Serialize)]
 pub struct StationEvent {
-    pub n:         usize,
-    pub total:     usize,
-    pub id:        String,
-    pub lat:       f64,
-    pub lon:       f64,
-    pub temp_c:    f64,
+    pub n: usize,
+    pub total: usize,
+    pub id: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub temp_c: f64,
     pub condition: String,
-    pub wmo_code:  u8,
-    pub complete:  bool,
+    pub wmo_code: u8,
+    pub complete: bool,
 }
 
 pub struct AppState {
-    pub trie:      RwLock<GeoTrie>,
-    pub store:     RedisStore,
-    pub config:    Config,
+    pub trie: RwLock<GeoTrie>,
+    pub store: RedisStore,
+    pub config: Config,
     pub last_sync: RwLock<Option<u64>>,
-    pub db:        Arc<db::Db>,
-    pub updates:   broadcast::Sender<StationEvent>,
+    pub db: Arc<db::Db>,
+    pub updates: broadcast::Sender<StationEvent>,
     pub positions: RwLock<HashMap<String, (f64, f64)>>,
     /// All raw METAR observations from the latest download.
     /// Used for zoom-aware on-demand aggregation by the region endpoint.
-    pub raw_stations:    RwLock<Vec<metar_bulk::BulkMETAR>>,
+    pub raw_stations: RwLock<Vec<metar_bulk::BulkMETAR>>,
     /// Pre-computed cluster tiers keyed by S2 level (2, 3, 4, 5).
     /// Rebuilt after every METAR download so all zoom levels are always fresh.
     pub cached_clusters: RwLock<HashMap<u8, Vec<aggregate::Cluster>>>,
@@ -50,27 +50,32 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let cfg      = Config::from_env();
-    let metrics  = Metrics::new();
-    let store    = RedisStore::with_config(&cfg.redis_url, Arc::clone(&metrics), cfg.entity_ttl_secs)?;
+    let cfg = Config::from_env();
+    let metrics = Metrics::new();
+    let store = RedisStore::with_config(&cfg.redis_url, Arc::clone(&metrics), cfg.entity_ttl_secs)?;
     let database = Arc::new(db::Db::open(&cfg.sqlite_path)?);
-    let (tx, _)  = broadcast::channel::<StationEvent>(2048);
+    let (tx, _) = broadcast::channel::<StationEvent>(2048);
 
     tracing::info!("Source: aviationweather.gov bulk METAR dump (updated every 5 min)");
     tracing::info!("Redis:  {}", cfg.redis_url);
     tracing::info!("SQLite: {}", cfg.sqlite_path);
-    tracing::info!("S2 level: {}, poll: {}s, stream rate: {}ms/event, max clusters: {}",
-        cfg.s2_level, cfg.poll_interval_secs, cfg.stream_rate_ms, cfg.max_clusters);
+    tracing::info!(
+        "S2 level: {}, poll: {}s, stream rate: {}ms/event, max clusters: {}",
+        cfg.s2_level,
+        cfg.poll_interval_secs,
+        cfg.stream_rate_ms,
+        cfg.max_clusters
+    );
 
     let state = Arc::new(AppState {
-        trie:            RwLock::new(GeoTrie::new(cfg.s2_level)),
+        trie: RwLock::new(GeoTrie::new(cfg.s2_level)),
         store,
-        config:          cfg.clone(),
-        last_sync:       RwLock::new(None),
-        db:              database,
-        updates:         tx,
-        positions:       RwLock::new(HashMap::new()),
-        raw_stations:    RwLock::new(Vec::new()),
+        config: cfg.clone(),
+        last_sync: RwLock::new(None),
+        db: database,
+        updates: tx,
+        positions: RwLock::new(HashMap::new()),
+        raw_stations: RwLock::new(Vec::new()),
         cached_clusters: RwLock::new(HashMap::new()),
     });
 
@@ -84,23 +89,30 @@ async fn main() -> anyhow::Result<()> {
 
                     // ── 1. Persist all raw METAR observations to SQLite ────
                     // (detail view / history; not shown on map)
-                    let db_data: Vec<db::StationData> = stations.iter().map(|s| db::StationData {
-                        id:        s.icao_id.clone(),
-                        lat:       s.lat,
-                        lon:       s.lon,
-                        name:      s.icao_id.clone(),
-                        temp_c:    s.temp_c,
-                        dewp_c:    s.dewp_c,
-                        wdir:      s.wind_dir,
-                        wspd_kt:   s.wind_spd,
-                        wx_string: format!(
-                            "{} {}",
-                            open_meteo::wmo_emoji(metar_bulk::wx_to_wmo(&s.wx, &s.sky)),
-                            if s.wx.is_empty() { s.sky.clone() } else { s.wx.clone() }
-                        ),
-                        clouds:    s.sky.clone(),
-                        flt_cat:   s.flt_cat.clone(),
-                    }).collect();
+                    let db_data: Vec<db::StationData> = stations
+                        .iter()
+                        .map(|s| db::StationData {
+                            id: s.icao_id.clone(),
+                            lat: s.lat,
+                            lon: s.lon,
+                            name: s.icao_id.clone(),
+                            temp_c: s.temp_c,
+                            dewp_c: s.dewp_c,
+                            wdir: s.wind_dir,
+                            wspd_kt: s.wind_spd,
+                            wx_string: format!(
+                                "{} {}",
+                                open_meteo::wmo_emoji(metar_bulk::wx_to_wmo(&s.wx, &s.sky)),
+                                if s.wx.is_empty() {
+                                    s.sky.clone()
+                                } else {
+                                    s.wx.clone()
+                                }
+                            ),
+                            clouds: s.sky.clone(),
+                            flt_cat: s.flt_cat.clone(),
+                        })
+                        .collect();
                     if let Err(e) = poll_state.db.upsert_batch(db_data).await {
                         tracing::error!("SQLite upsert: {e}");
                     }
@@ -113,7 +125,11 @@ async fn main() -> anyhow::Result<()> {
                         let mut cache = poll_state.cached_clusters.write().await;
                         for level in [2u8, 3, 4, 5] {
                             let clusters = aggregate::aggregate(&stations, usize::MAX, Some(level));
-                            tracing::debug!("Cached {} clusters at S2 level {}", clusters.len(), level);
+                            tracing::debug!(
+                                "Cached {} clusters at S2 level {}",
+                                clusters.len(),
+                                level
+                            );
                             cache.insert(level, clusters);
                         }
                     }
@@ -128,13 +144,15 @@ async fn main() -> anyhow::Result<()> {
 
                     tracing::info!(
                         "Streaming {} clusters (from {} raw stations) at {}ms/event…",
-                        n_clusters, total, poll_state.config.stream_rate_ms
+                        n_clusters,
+                        total,
+                        poll_state.config.stream_rate_ms
                     );
 
                     // ── 3. Stream cluster events into the trie ────────────
                     for (n, c) in clusters.iter().enumerate() {
                         let entry = GeoEntry {
-                            id:  c.id.clone(),
+                            id: c.id.clone(),
                             lat: c.lat,
                             lon: c.lon,
                             payload: serde_json::json!({
@@ -158,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
 
                         {
                             let mut trie = poll_state.trie.write().await;
-                            let mut pos  = poll_state.positions.write().await;
+                            let mut pos = poll_state.positions.write().await;
                             if let Some(&(old_lat, old_lon)) = pos.get(&c.id) {
                                 trie.remove_entry(old_lat, old_lon, &c.id);
                             }
@@ -167,20 +185,26 @@ async fn main() -> anyhow::Result<()> {
                         }
 
                         let _ = poll_state.updates.send(StationEvent {
-                            n, total: n_clusters,
-                            complete:  n == n_clusters - 1,
-                            id:        c.id.clone(),
-                            lat:       c.lat,
-                            lon:       c.lon,
-                            temp_c:    c.temp_c.unwrap_or(0.0),
-                            condition: if c.wx.is_empty() { c.sky.clone() } else { c.wx.clone() },
-                            wmo_code:  c.wmo_code,
+                            n,
+                            total: n_clusters,
+                            complete: n == n_clusters - 1,
+                            id: c.id.clone(),
+                            lat: c.lat,
+                            lon: c.lon,
+                            temp_c: c.temp_c.unwrap_or(0.0),
+                            condition: if c.wx.is_empty() {
+                                c.sky.clone()
+                            } else {
+                                c.wx.clone()
+                            },
+                            wmo_code: c.wmo_code,
                         });
 
                         if poll_state.config.stream_rate_ms > 0 {
                             tokio::time::sleep(tokio::time::Duration::from_millis(
                                 poll_state.config.stream_rate_ms,
-                            )).await;
+                            ))
+                            .await;
                         }
                     }
 
@@ -189,11 +213,14 @@ async fn main() -> anyhow::Result<()> {
                         let _ = poll_state.store.persist_trie(&trie).await;
                     }
                     let ts = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
                     *poll_state.last_sync.write().await = Some(ts);
                     tracing::info!(
                         "Cycle complete: {} raw stations → {} clusters on map",
-                        total, n_clusters
+                        total,
+                        n_clusters
                     );
                 }
                 Ok(_) => tracing::warn!("Bulk METAR returned 0 stations"),
@@ -201,17 +228,18 @@ async fn main() -> anyhow::Result<()> {
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(
                 poll_state.config.poll_interval_secs,
-            )).await;
+            ))
+            .await;
         }
     });
 
     let app = Router::new()
-        .route("/api/aircraft",     get(routes::all_stations))
+        .route("/api/aircraft", get(routes::all_stations))
         .route("/api/aircraft/:id", get(routes::station_detail))
-        .route("/api/region",       get(routes::region_stations))
-        .route("/api/metrics",      get(routes::get_metrics))
-        .route("/api/stream",       get(routes::sse_stream))
-        .route("/health",           get(routes::health))
+        .route("/api/region", get(routes::region_stations))
+        .route("/api/metrics", get(routes::get_metrics))
+        .route("/api/stream", get(routes::sse_stream))
+        .route("/health", get(routes::health))
         .layer(CorsLayer::permissive())
         .with_state(Arc::clone(&state));
 

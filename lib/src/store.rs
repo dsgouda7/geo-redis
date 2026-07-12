@@ -1,7 +1,7 @@
-use std::{collections::HashSet, sync::Arc, time::Instant};
+use crate::{GeoEntry, GeoTrie, Metrics, Result};
 use redis::AsyncCommands;
 use s2::{cellid::CellID, latlng::LatLng, s1};
-use crate::{GeoEntry, GeoTrie, Metrics, Result};
+use std::{collections::HashSet, sync::Arc, time::Instant};
 
 /// Default safety-net TTL: 10 minutes.
 pub const DEFAULT_ENTITY_TTL_SECS: u64 = 600;
@@ -10,7 +10,9 @@ const CHUNK_SIZE: usize = 400;
 // Compile-time proof that RedisStore is safe to share across async tasks.
 const _: () = {
     fn assert_send_sync<T: Send + Sync>() {}
-    fn check() { assert_send_sync::<RedisStore>(); }
+    fn check() {
+        assert_send_sync::<RedisStore>();
+    }
     let _ = check;
 };
 
@@ -76,9 +78,9 @@ return deleted
 "#;
 
 pub struct RedisStore {
-    client:          RedisClientKind,
-    metrics:         Arc<Metrics>,
-    key_prefix:      String,
+    client: RedisClientKind,
+    metrics: Arc<Metrics>,
+    key_prefix: String,
     entity_ttl_secs: u64,
 }
 
@@ -90,14 +92,14 @@ impl RedisStore {
 
     /// Create a single-node store with an explicit entity TTL.
     pub fn with_config(
-        redis_url:       &str,
-        metrics:         Arc<Metrics>,
+        redis_url: &str,
+        metrics: Arc<Metrics>,
         entity_ttl_secs: u64,
     ) -> Result<Self> {
         Ok(Self {
-            client:          RedisClientKind::Single(redis::Client::open(redis_url)?),
+            client: RedisClientKind::Single(redis::Client::open(redis_url)?),
             metrics,
-            key_prefix:      "proxima".into(),
+            key_prefix: "proxima".into(),
             entity_ttl_secs,
         })
     }
@@ -115,16 +117,15 @@ impl RedisStore {
     /// )?;
     /// ```
     pub fn new_cluster(
-        node_urls:       Vec<String>,
-        metrics:         Arc<Metrics>,
+        node_urls: Vec<String>,
+        metrics: Arc<Metrics>,
         entity_ttl_secs: u64,
     ) -> Result<Self> {
-        let client = redis::cluster::ClusterClient::new(node_urls)
-            .map_err(crate::Error::Redis)?;
+        let client = redis::cluster::ClusterClient::new(node_urls).map_err(crate::Error::Redis)?;
         Ok(Self {
-            client:          RedisClientKind::Cluster(client),
+            client: RedisClientKind::Cluster(client),
             metrics,
-            key_prefix:      "proxima".into(),
+            key_prefix: "proxima".into(),
             entity_ttl_secs,
         })
     }
@@ -136,7 +137,9 @@ impl RedisStore {
     }
 
     /// Returns the Redis key namespace used by this store.
-    pub fn key_prefix(&self) -> &str { &self.key_prefix }
+    pub fn key_prefix(&self) -> &str {
+        &self.key_prefix
+    }
 
     /// Returns `true` when operating in Redis Cluster mode.
     pub fn is_cluster(&self) -> bool {
@@ -210,17 +213,23 @@ impl RedisStore {
     pub async fn persist_trie(&self, trie: &GeoTrie) -> Result<()> {
         let start = Instant::now();
         let mut entries = trie.all_entries();
-        if entries.is_empty() { return Ok(()); }
-
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-        for e in &mut entries {
-            if e.written_at == 0 { e.written_at = now_ms; }
+        if entries.is_empty() {
+            return Ok(());
         }
 
-        let ttl   = self.entity_ttl_secs;
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        for e in &mut entries {
+            if e.written_at == 0 {
+                e.written_at = now_ms;
+            }
+        }
+
+        let ttl = self.entity_ttl_secs;
         let ttl_i = ttl as i64;
-        let active_key    = self.k_active_cells();
+        let active_key = self.k_active_cells();
         let written_at_key = self.k_written_at();
         // Lua receives the full cell-key prefix (with hash tag) so it can construct
         // keys like `{proxima}:cell:{token}` without reformatting.
@@ -233,12 +242,14 @@ impl RedisStore {
                 let mut pipe = redis::pipe();
                 pipe.atomic();
                 for entry in chunk {
-                    let token   = trie.cell_token(entry.lat, entry.lon);
-                    let json    = serde_json::to_string(entry)?;
-                    pipe.set_ex(self.k_entity(&entry.id),   &json,        ttl).ignore();
-                    pipe.sadd(self.k_cell(&token),           &entry.id).ignore();
-                    pipe.set_ex(self.k_location(&entry.id), &token,        ttl).ignore();
-                    pipe.zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64).ignore();
+                    let token = trie.cell_token(entry.lat, entry.lon);
+                    let json = serde_json::to_string(entry)?;
+                    pipe.set_ex(self.k_entity(&entry.id), &json, ttl).ignore();
+                    pipe.sadd(self.k_cell(&token), &entry.id).ignore();
+                    pipe.set_ex(self.k_location(&entry.id), &token, ttl)
+                        .ignore();
+                    pipe.zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64)
+                        .ignore();
                     new_cells.insert(token);
                 }
                 pipe.query_async::<()>(&mut conn).await?;
@@ -247,18 +258,29 @@ impl RedisStore {
             let lua_script = redis::Script::new(ACTIVE_CELLS_LUA);
             let mut inv = lua_script.prepare_invoke();
             inv.key(&active_key).arg(&cell_pfx).arg(ttl_i);
-            for token in &new_cells { inv.arg(token.as_str()); }
+            for token in &new_cells {
+                inv.arg(token.as_str());
+            }
             let stale: i64 = inv.invoke_async(&mut conn).await?;
-            if stale > 0 { tracing::debug!("Lua: removed {} stale cell keys", stale); }
+            if stale > 0 {
+                tracing::debug!("Lua: removed {} stale cell keys", stale);
+            }
 
-            self.metrics.record_write(start.elapsed().as_micros() as u64);
-            tracing::debug!("Persisted {} entries in {}µs", entries.len(), start.elapsed().as_micros());
+            self.metrics
+                .record_write(start.elapsed().as_micros() as u64);
+            tracing::debug!(
+                "Persisted {} entries in {}µs",
+                entries.len(),
+                start.elapsed().as_micros()
+            );
             Ok(())
         })
     }
 
     pub async fn query_region(&self, tokens: &[String]) -> Result<Vec<GeoEntry>> {
-        if tokens.is_empty() { return Ok(vec![]); }
+        if tokens.is_empty() {
+            return Ok(vec![]);
+        }
         let start = Instant::now();
 
         with_conn!(self, conn, {
@@ -269,46 +291,68 @@ impl RedisStore {
                 return Ok(vec![]);
             }
             let mut pipe = redis::pipe();
-            for id in &ids { pipe.get(self.k_entity(id)); }
+            for id in &ids {
+                pipe.get(self.k_entity(id));
+            }
             let jsons: Vec<Option<String>> = pipe.query_async(&mut conn).await?;
-            let entries: Vec<GeoEntry> = jsons.into_iter().flatten()
-                .filter_map(|j| serde_json::from_str(&j).ok()).collect();
+            let entries: Vec<GeoEntry> = jsons
+                .into_iter()
+                .flatten()
+                .filter_map(|j| serde_json::from_str(&j).ok())
+                .collect();
             self.metrics.record_read(start.elapsed().as_micros() as u64);
-            tracing::debug!("Queried {} tokens → {} entries in {}µs",
-                tokens.len(), entries.len(), start.elapsed().as_micros());
+            tracing::debug!(
+                "Queried {} tokens → {} entries in {}µs",
+                tokens.len(),
+                entries.len(),
+                start.elapsed().as_micros()
+            );
             Ok(entries)
         })
     }
-
 
     /// Returns the number of stale entries removed.
     pub async fn prune_written_at(&self) -> Result<usize> {
         let wk = self.k_written_at();
         let mut stale_total = 0usize;
-        let mut cursor      = 0u64;
+        let mut cursor = 0u64;
 
         with_conn!(self, conn, {
             loop {
                 let (new_cursor, pairs): (u64, Vec<String>) = redis::cmd("ZSCAN")
-                    .arg(&wk).arg(cursor).arg("COUNT").arg(200u64)
-                    .query_async(&mut conn).await?;
+                    .arg(&wk)
+                    .arg(cursor)
+                    .arg("COUNT")
+                    .arg(200u64)
+                    .query_async(&mut conn)
+                    .await?;
                 let members: Vec<String> = pairs.into_iter().step_by(2).collect();
                 if !members.is_empty() {
                     let mut pipe = redis::pipe();
-                    for id in &members { pipe.exists(self.k_entity(id)); }
+                    for id in &members {
+                        pipe.exists(self.k_entity(id));
+                    }
                     let alive: Vec<bool> = pipe.query_async(&mut conn).await?;
-                    let stale: Vec<&str> = members.iter().zip(alive.iter())
-                        .filter(|(_, &a)| !a).map(|(id, _)| id.as_str()).collect();
+                    let stale: Vec<&str> = members
+                        .iter()
+                        .zip(alive.iter())
+                        .filter(|(_, &a)| !a)
+                        .map(|(id, _)| id.as_str())
+                        .collect();
                     if !stale.is_empty() {
                         stale_total += stale.len();
                         let mut cmd = redis::cmd("ZREM");
                         cmd.arg(&wk);
-                        for s in &stale { cmd.arg(s); }
+                        for s in &stale {
+                            cmd.arg(s);
+                        }
                         cmd.query_async::<i64>(&mut conn).await?;
                     }
                 }
                 cursor = new_cursor;
-                if cursor == 0 { break; }
+                if cursor == 0 {
+                    break;
+                }
             }
             if stale_total > 0 {
                 tracing::info!("prune_written_at: removed {} stale entries", stale_total);
@@ -317,44 +361,61 @@ impl RedisStore {
         })
     }
 
-    pub fn metrics(&self) -> &Arc<Metrics> { &self.metrics }
+    pub fn metrics(&self) -> &Arc<Metrics> {
+        &self.metrics
+    }
 
     pub async fn merge_entries(&self, entries: &[GeoEntry], s2_level: u8) -> Result<usize> {
-        if entries.is_empty() { return Ok(0); }
-        let ttl            = self.entity_ttl_secs;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+        let ttl = self.entity_ttl_secs;
         let written_at_key = self.k_written_at();
         let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
 
         with_conn!(self, conn, {
             let mut score_pipe = redis::pipe();
-            for e in entries { score_pipe.zscore(&written_at_key, e.id.as_str()); }
+            for e in entries {
+                score_pipe.zscore(&written_at_key, e.id.as_str());
+            }
             let existing: Vec<Option<f64>> = score_pipe.query_async(&mut conn).await?;
 
-            let to_write: Vec<(GeoEntry, String)> = entries.iter().zip(existing.iter())
+            let to_write: Vec<(GeoEntry, String)> = entries
+                .iter()
+                .zip(existing.iter())
                 .filter_map(|(entry, existing_score)| {
                     let existing_ts = existing_score.map(|s| s as u64).unwrap_or(0);
                     if entry.written_at >= existing_ts {
                         let mut e = entry.clone();
-                        if e.written_at == 0 { e.written_at = now_ms; }
+                        if e.written_at == 0 {
+                            e.written_at = now_ms;
+                        }
                         let token = s2_cell_token(e.lat, e.lon, s2_level);
                         Some((e, token))
-                    } else { None }
+                    } else {
+                        None
+                    }
                 })
                 .collect();
 
             let written = to_write.len();
-            if written == 0 { return Ok(0); }
+            if written == 0 {
+                return Ok(0);
+            }
 
             for chunk in to_write.chunks(CHUNK_SIZE) {
                 let mut pipe = redis::pipe();
                 pipe.atomic();
                 for (entry, token) in chunk {
                     let json = serde_json::to_string(entry)?;
-                    pipe.set_ex(self.k_entity(&entry.id),   &json,  ttl).ignore();
-                    pipe.sadd(self.k_cell(token),           &entry.id).ignore();
-                    pipe.set_ex(self.k_location(&entry.id), token,  ttl).ignore();
-                    pipe.zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64).ignore();
+                    pipe.set_ex(self.k_entity(&entry.id), &json, ttl).ignore();
+                    pipe.sadd(self.k_cell(token), &entry.id).ignore();
+                    pipe.set_ex(self.k_location(&entry.id), token, ttl).ignore();
+                    pipe.zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64)
+                        .ignore();
                 }
                 pipe.query_async::<()>(&mut conn).await?;
             }
@@ -365,38 +426,57 @@ impl RedisStore {
 
     pub async fn entities_written_after(
         &self,
-        since_ms:     u64,
+        since_ms: u64,
         prefix_start: &str,
-        prefix_end:   &str,
+        prefix_end: &str,
     ) -> Result<Vec<GeoEntry>> {
         let wk = self.k_written_at();
 
         with_conn!(self, conn, {
             let ids: Vec<String> = redis::cmd("ZRANGEBYSCORE")
-                .arg(&wk).arg(since_ms + 1).arg("+inf")
-                .query_async(&mut conn).await?;
-            if ids.is_empty() { return Ok(vec![]); }
+                .arg(&wk)
+                .arg(since_ms + 1)
+                .arg("+inf")
+                .query_async(&mut conn)
+                .await?;
+            if ids.is_empty() {
+                return Ok(vec![]);
+            }
 
             let mut loc_pipe = redis::pipe();
-            for id in &ids { loc_pipe.get(self.k_location(id)); }
+            for id in &ids {
+                loc_pipe.get(self.k_location(id));
+            }
             let tokens: Vec<Option<String>> = loc_pipe.query_async(&mut conn).await?;
 
-            let in_range_ids: Vec<String> = ids.iter().zip(tokens.iter())
+            let in_range_ids: Vec<String> = ids
+                .iter()
+                .zip(tokens.iter())
                 .filter_map(|(id, tok)| {
                     tok.as_ref().and_then(|t| {
                         let ge = prefix_start.is_empty() || t.as_str() >= prefix_start;
-                        let lt = prefix_end.is_empty()   || t.as_str() <  prefix_end;
-                        if ge && lt { Some(id.clone()) } else { None }
+                        let lt = prefix_end.is_empty() || t.as_str() < prefix_end;
+                        if ge && lt {
+                            Some(id.clone())
+                        } else {
+                            None
+                        }
                     })
                 })
                 .collect();
-            if in_range_ids.is_empty() { return Ok(vec![]); }
+            if in_range_ids.is_empty() {
+                return Ok(vec![]);
+            }
 
             let mut pipe = redis::pipe();
-            for id in &in_range_ids { pipe.get(self.k_entity(id)); }
+            for id in &in_range_ids {
+                pipe.get(self.k_entity(id));
+            }
             let jsons: Vec<Option<String>> = pipe.query_async(&mut conn).await?;
 
-            let entries = jsons.into_iter().flatten()
+            let entries = jsons
+                .into_iter()
+                .flatten()
                 .filter_map(|j| serde_json::from_str::<GeoEntry>(&j).ok())
                 .collect();
             Ok(entries)
@@ -435,31 +515,33 @@ impl RedisStore {
 pub trait GeoStore: Send + Sync {
     /// Idempotent, freshness-ordered upsert.
     fn merge_entries<'a>(
-        &'a self, entries: &'a [GeoEntry], s2_level: u8,
+        &'a self,
+        entries: &'a [GeoEntry],
+        s2_level: u8,
     ) -> impl std::future::Future<Output = Result<usize>> + Send + 'a;
 
     /// Returns every entity in `[prefix_start, prefix_end)` whose `written_at`
     /// timestamp is strictly greater than `since_ms`.
     fn entities_written_after<'a>(
         &'a self,
-        since_ms:     u64,
+        since_ms: u64,
         prefix_start: &'a str,
-        prefix_end:   &'a str,
+        prefix_end: &'a str,
     ) -> impl std::future::Future<Output = Result<Vec<GeoEntry>>> + Send + 'a;
 
     /// Scans the `written_at` sorted set and removes stale members.
-    fn prune_written_at(
-        &self,
-    ) -> impl std::future::Future<Output = Result<usize>> + Send + '_;
+    fn prune_written_at(&self) -> impl std::future::Future<Output = Result<usize>> + Send + '_;
 
     /// Bulk-replaces the entire active entity set from a `GeoTrie` snapshot.
     fn persist_trie<'a>(
-        &'a self, trie: &'a GeoTrie,
+        &'a self,
+        trie: &'a GeoTrie,
     ) -> impl std::future::Future<Output = Result<()>> + Send + 'a;
 
     /// Returns all entities whose S2 cell tokens appear in `tokens`.
     fn query_region<'a>(
-        &'a self, tokens: &'a [String],
+        &'a self,
+        tokens: &'a [String],
     ) -> impl std::future::Future<Output = Result<Vec<GeoEntry>>> + Send + 'a;
 
     /// Access runtime read/write latency metrics.
@@ -471,9 +553,13 @@ impl GeoStore for RedisStore {
         self.merge_entries(entries, s2_level).await
     }
     async fn entities_written_after(
-        &self, since_ms: u64, prefix_start: &str, prefix_end: &str,
+        &self,
+        since_ms: u64,
+        prefix_start: &str,
+        prefix_end: &str,
     ) -> Result<Vec<GeoEntry>> {
-        self.entities_written_after(since_ms, prefix_start, prefix_end).await
+        self.entities_written_after(since_ms, prefix_start, prefix_end)
+            .await
     }
     async fn prune_written_at(&self) -> Result<usize> {
         self.prune_written_at().await
@@ -494,9 +580,11 @@ impl GeoStore for RedisStore {
 /// Compute the S2 cell token for a (lat, lon) at the given S2 level.
 /// Mirrors `GeoTrie::cell_token` so `merge_entries` can work without a trie.
 fn s2_cell_token(lat: f64, lon: f64, level: u8) -> String {
-    let ll   = LatLng::new(s1::Deg(lat).into(), s1::Deg(lon).into());
+    let ll = LatLng::new(s1::Deg(lat).into(), s1::Deg(lon).into());
     let cell = CellID::from(ll).parent(level as u64);
-    if cell.0 == 0 { return "X".into(); }
-    let hex  = format!("{:016x}", cell.0);
+    if cell.0 == 0 {
+        return "X".into();
+    }
+    let hex = format!("{:016x}", cell.0);
     hex.trim_end_matches('0').to_string()
 }

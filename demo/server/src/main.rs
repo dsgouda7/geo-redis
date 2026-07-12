@@ -3,20 +3,20 @@ mod db;
 mod opensky;
 mod routes;
 
-use std::sync::Arc;
 use axum::{routing::get, Router};
+use config::Config;
+use proxima::{GeoEntry, GeoTrie, Metrics, RedisStore};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
-use proxima::{GeoEntry, GeoTrie, Metrics, RedisStore};
-use config::Config;
 
 pub struct AppState {
-    pub trie:      RwLock<GeoTrie>,
-    pub store:     RedisStore,
-    pub config:    Config,
+    pub trie: RwLock<GeoTrie>,
+    pub store: RedisStore,
+    pub config: Config,
     pub last_sync: RwLock<Option<u64>>,
     /// Full metadata + position history — queried on-demand for detail view
-    pub db:        Arc<db::Db>,
+    pub db: Arc<db::Db>,
 }
 
 #[tokio::main]
@@ -26,21 +26,25 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let cfg     = Config::from_env();
+    let cfg = Config::from_env();
     let metrics = Metrics::new();
-    let store   = RedisStore::with_config(&cfg.redis_url, Arc::clone(&metrics), cfg.entity_ttl_secs)?;
+    let store = RedisStore::with_config(&cfg.redis_url, Arc::clone(&metrics), cfg.entity_ttl_secs)?;
     let database = Arc::new(db::Db::open(&cfg.sqlite_path)?);
 
     tracing::info!("Redis: {}", cfg.redis_url);
     tracing::info!("SQLite: {}", cfg.sqlite_path);
-    tracing::info!("S2 level: {}, poll interval: {}s", cfg.s2_level, cfg.poll_interval_secs);
+    tracing::info!(
+        "S2 level: {}, poll interval: {}s",
+        cfg.s2_level,
+        cfg.poll_interval_secs
+    );
 
     let state = Arc::new(AppState {
-        trie:      RwLock::new(GeoTrie::new(cfg.s2_level)),
+        trie: RwLock::new(GeoTrie::new(cfg.s2_level)),
         store,
-        config:    cfg.clone(),
+        config: cfg.clone(),
         last_sync: RwLock::new(None),
-        db:        database,
+        db: database,
     });
 
     // ── background poller ─────────────────────────────────────────────────
@@ -54,17 +58,20 @@ async fn main() -> anyhow::Result<()> {
                     let n = aircraft.len();
 
                     // ── 1. Persist metadata + history to SQLite ────────────
-                    let db_data: Vec<db::AircraftData> = aircraft.iter().map(|a| db::AircraftData {
-                        id:             a.icao24.clone(),
-                        lat:            a.lat,
-                        lon:            a.lon,
-                        callsign:       a.callsign.clone(),
-                        origin_country: a.origin_country.clone(),
-                        altitude:       a.altitude,
-                        velocity:       a.velocity,
-                        heading:        a.heading,
-                        on_ground:      a.on_ground,
-                    }).collect();
+                    let db_data: Vec<db::AircraftData> = aircraft
+                        .iter()
+                        .map(|a| db::AircraftData {
+                            id: a.icao24.clone(),
+                            lat: a.lat,
+                            lon: a.lon,
+                            callsign: a.callsign.clone(),
+                            origin_country: a.origin_country.clone(),
+                            altitude: a.altitude,
+                            velocity: a.velocity,
+                            heading: a.heading,
+                            on_ground: a.on_ground,
+                        })
+                        .collect();
                     if let Err(e) = poll_state.db.upsert_batch(db_data).await {
                         tracing::error!("SQLite upsert failed: {e}");
                     }
@@ -75,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
                         trie.clear();
                         for a in &aircraft {
                             trie.insert(GeoEntry {
-                                id:  a.icao24.clone(),
+                                id: a.icao24.clone(),
                                 lat: a.lat,
                                 lon: a.lon,
                                 payload: serde_json::json!({
@@ -116,11 +123,11 @@ async fn main() -> anyhow::Result<()> {
 
     // ── HTTP server ───────────────────────────────────────────────────────
     let app = Router::new()
-        .route("/api/aircraft",     get(routes::all_aircraft))
+        .route("/api/aircraft", get(routes::all_aircraft))
         .route("/api/aircraft/:id", get(routes::aircraft_detail))
-        .route("/api/region",       get(routes::region_aircraft))
-        .route("/api/metrics",      get(routes::get_metrics))
-        .route("/api/health",       get(routes::health))
+        .route("/api/region", get(routes::region_aircraft))
+        .route("/api/metrics", get(routes::get_metrics))
+        .route("/api/health", get(routes::health))
         .layer(CorsLayer::permissive())
         .with_state(state);
 

@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
 use rusqlite::{params, Connection};
 use serde::Serialize;
+use std::sync::{Arc, Mutex};
 
 // ── Schema ─────────────────────────────────────────────────────────────────
 
@@ -34,28 +34,28 @@ ON position_history(aircraft_id, recorded_at DESC);
 // ── Data transfer structs ──────────────────────────────────────────────────
 
 pub struct AircraftData {
-    pub id:             String,
-    pub lat:            f64,
-    pub lon:            f64,
-    pub callsign:       Option<String>,
+    pub id: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub callsign: Option<String>,
     pub origin_country: String,
-    pub altitude:       Option<f64>,
-    pub velocity:       Option<f64>,
-    pub heading:        Option<f64>,
-    pub on_ground:      bool,
+    pub altitude: Option<f64>,
+    pub velocity: Option<f64>,
+    pub heading: Option<f64>,
+    pub on_ground: bool,
 }
 
 #[derive(Serialize)]
 pub struct AircraftDetail {
-    pub id:             String,
-    pub callsign:       Option<String>,
+    pub id: String,
+    pub callsign: Option<String>,
     pub origin_country: String,
-    pub altitude:       Option<f64>,
-    pub velocity:       Option<f64>,
-    pub heading:        Option<f64>,
-    pub on_ground:      bool,
+    pub altitude: Option<f64>,
+    pub velocity: Option<f64>,
+    pub heading: Option<f64>,
+    pub on_ground: bool,
     /// Last 1–3 positions [lat, lon], oldest first.
-    pub history:        Vec<[f64; 2]>,
+    pub history: Vec<[f64; 2]>,
 }
 
 // ── Db ─────────────────────────────────────────────────────────────────────
@@ -70,7 +70,9 @@ impl Db {
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
         tracing::info!("SQLite opened at {path}");
-        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 
     /// Batch-upserts all aircraft + appends one position_history row each.
@@ -122,12 +124,18 @@ impl Db {
     pub async fn prune_history(&self) -> anyhow::Result<()> {
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let guard = conn.lock().map_err(|_| anyhow::anyhow!("db mutex poisoned"))?;
+            let guard = conn
+                .lock()
+                .map_err(|_| anyhow::anyhow!("db mutex poisoned"))?;
             let cutoff = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() as i64 - 600;
-            guard.execute("DELETE FROM position_history WHERE recorded_at < ?1", params![cutoff])?;
+                .as_secs() as i64
+                - 600;
+            guard.execute(
+                "DELETE FROM position_history WHERE recorded_at < ?1",
+                params![cutoff],
+            )?;
             Ok(())
         })
         .await?
@@ -137,9 +145,11 @@ impl Db {
     /// Called only when zoomed in and < 5 aircraft are in view.
     pub async fn get_detail(&self, id: &str) -> anyhow::Result<Option<AircraftDetail>> {
         let conn = Arc::clone(&self.conn);
-        let id   = id.to_string();
+        let id = id.to_string();
         tokio::task::spawn_blocking(move || -> anyhow::Result<Option<AircraftDetail>> {
-            let guard = conn.lock().map_err(|_| anyhow::anyhow!("db mutex poisoned"))?;
+            let guard = conn
+                .lock()
+                .map_err(|_| anyhow::anyhow!("db mutex poisoned"))?;
 
             let result = guard.query_row(
                 "SELECT id,callsign,origin_country,altitude,velocity,heading,on_ground
@@ -147,22 +157,22 @@ impl Db {
                 params![id],
                 |row| {
                     Ok(AircraftDetail {
-                        id:             row.get(0)?,
-                        callsign:       row.get(1)?,
+                        id: row.get(0)?,
+                        callsign: row.get(1)?,
                         origin_country: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                        altitude:       row.get(3)?,
-                        velocity:       row.get(4)?,
-                        heading:        row.get(5)?,
-                        on_ground:      row.get::<_, i32>(6)? != 0,
-                        history:        vec![],
+                        altitude: row.get(3)?,
+                        velocity: row.get(4)?,
+                        heading: row.get(5)?,
+                        on_ground: row.get::<_, i32>(6)? != 0,
+                        history: vec![],
                     })
                 },
             );
 
             let mut detail = match result {
-                Ok(d)                                       => d,
-                Err(rusqlite::Error::QueryReturnedNoRows)   => return Ok(None),
-                Err(e)                                      => return Err(e.into()),
+                Ok(d) => d,
+                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+                Err(e) => return Err(e.into()),
             };
 
             let mut stmt = guard.prepare(
