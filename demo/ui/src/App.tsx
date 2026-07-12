@@ -6,6 +6,7 @@ import { Aircraft, MetricsResponse } from './types';
 import AircraftMarker from './components/AircraftMarker';
 import AircraftPanel from './components/AircraftPanel';
 import MetricsPanel from './components/MetricsPanel';
+import TrieExplorer from './components/TrieExplorer';
 import 'leaflet/dist/leaflet.css';
 const REGION_ZOOM = 6;   // switch to Redis region query above this zoom
 const DETAIL_ZOOM = 9;   // fetch SQLite detail below this count
@@ -44,6 +45,7 @@ export default function App() {
   const [status,   setStatus]   = useState('Loading live aircraft...');
   const [streamProgress, setStreamProgress] = useState<{n:number,total:number}|null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const mapRef        = useRef<LeafletMap | null>(null);
   const lastBoundsRef = useRef<[number,number,number,number,number] | null>(null);
 
@@ -97,6 +99,9 @@ export default function App() {
     mapRef.current?.flyTo([a.lat, a.lon], Math.max(mapRef.current.getZoom(), 9), { animate: true, duration: 0.8 });
   }, []);
 
+  const handleHover = useCallback((a: Aircraft) => setHoveredId(a.id), []);
+  const handleHoverEnd = useCallback(() => setHoveredId(null), []);
+
   // Metrics poller (every 10s)
   useEffect(() => {
     const poll = async () => { try { setMetrics(await fetchMetrics()); } catch { /**/ } };
@@ -136,7 +141,7 @@ export default function App() {
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#020617' }}>
       <header style={{ padding: '7px 16px', background: 'linear-gradient(90deg,#0c1528,#0f172a)', borderBottom: '1px solid rgba(56,189,248,0.15)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, boxShadow: '0 2px 12px rgba(0,0,0,0.5)' }}>
         <span style={{ fontSize: 20 }}>✈</span>
-        <strong style={{ fontSize: '1rem', color: '#38bdf8', letterSpacing: 0.5 }}>GeoRedis</strong>
+        <strong style={{ fontSize: '1rem', color: '#38bdf8', letterSpacing: 0.5 }}>proxima</strong>
         <span style={{ color: '#475569', fontSize: 12 }}>·</span>
         <span style={{ color: '#94a3b8', fontSize: 12 }}>Live Aircraft Tracker</span>
         <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: '#64748b', maxWidth: 500, textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status}</span>
@@ -166,21 +171,30 @@ export default function App() {
         >
           <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution='&copy; OSM &copy; CARTO' maxZoom={19} />
           <MapWatcher onBounds={handleBounds} />
-          {aircraft.map(a => <AircraftMarker key={a.id} aircraft={a} onClick={handleSelect} />)}
+          {aircraft.map(a => (
+            <AircraftMarker
+              key={a.id} aircraft={a} onClick={handleSelect}
+              onHover={handleHover} onHoverEnd={handleHoverEnd}
+              simplified={aircraft.length > 100}
+            />
+          ))}
         </MapContainer>
         <AircraftPanel aircraft={aircraft} onSelect={handleSelect} selected={selected} />
         {metrics && <MetricsPanel metrics={metrics} />}
-        <div style={{ position: 'absolute', bottom: 24, left: 10, zIndex: 1000, background: 'rgba(15,23,42,0.9)', borderRadius: 8, padding: '8px 12px', fontSize: 10, color: '#94a3b8', border: '1px solid rgba(255,255,255,0.07)', backdropFilter: 'blur(4px)' }}>
-          <div style={{ fontWeight: 700, marginBottom: 5, color: '#e2e8f0', fontSize: 11 }}>Altitude</div>
-          {([['#a78bfa','>10 km'],['#38bdf8','7-10 km'],['#34d399','3-7 km'],['#fbbf24','0.5-3 km'],['#f87171','<500 m'],['#64748b','Ground']] as [string,string][]).map(([c,l]) => (
-            <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-              <div style={{ width: 10, height: 10, borderRadius: '50%', background: c, flexShrink: 0 }} />
-              <span>{l}</span>
+        <div style={{ position: 'absolute', bottom: 24, left: 10, zIndex: 1000, display: 'flex', alignItems: 'flex-end', gap: 10 }}>
+          <div style={{ background: 'rgba(15,23,42,0.9)', borderRadius: 8, padding: '8px 12px', fontSize: 10, color: '#94a3b8', border: '1px solid rgba(255,255,255,0.07)', backdropFilter: 'blur(4px)' }}>
+            <div style={{ fontWeight: 700, marginBottom: 5, color: '#e2e8f0', fontSize: 11 }}>Altitude</div>
+            {([['#a78bfa','>10 km'],['#38bdf8','7-10 km'],['#34d399','3-7 km'],['#fbbf24','0.5-3 km'],['#f87171','<500 m'],['#64748b','Ground']] as [string,string][]).map(([c,l]) => (
+              <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', background: c, flexShrink: 0 }} />
+                <span>{l}</span>
+              </div>
+            ))}
+            <div style={{ marginTop: 8, fontSize: 9, color: '#334155', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 6 }}>
+              Zoom 9+ · &lt;5 aircraft: full detail from SQLite
             </div>
-          ))}
-          <div style={{ marginTop: 8, fontSize: 9, color: '#334155', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 6 }}>
-            Zoom 9+ · &lt;5 aircraft: full detail from SQLite
           </div>
+          <TrieExplorer highlightId={hoveredId ?? selected} />
         </div>
       </div>
     </div>

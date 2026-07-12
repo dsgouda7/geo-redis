@@ -7,6 +7,7 @@ import ControlPanel  from './components/ControlPanel';
 import WeatherPanel  from './components/WeatherPanel';
 import type { ClusterEvent } from './types';
 import { STATUS_COLOR } from './types';
+import { CLUSTER_NODES } from './config';
 
 const card: React.CSSProperties = {
   background:   '#0a1628',
@@ -56,7 +57,7 @@ export default function App() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 700, color: '#38bdf8', letterSpacing: 0.5 }}>
-            georedis
+            proxima
           </h1>
           <div style={{ fontSize: 12, color: '#475569' }}>Cluster Monitor</div>
         </div>
@@ -147,7 +148,7 @@ export default function App() {
 
       {/* ── Footer ─────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 20, color: '#334155', fontSize: 10 }}>
-        <span>Polls every 2 s · Nodes :4000–:4003</span>
+        <span>Polls every 2 s · Nodes {CLUSTER_NODES.map(n => new URL(n).port).join(', ')}</span>
         <span>{snapshots.length} snapshots captured</span>
         <span style={{ marginLeft: 'auto' }}>
           Start cluster: <code style={{ color: '#475569' }}>docker compose -f demo/cluster-compose.yml up -d</code>

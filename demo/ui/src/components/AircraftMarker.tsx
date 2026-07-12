@@ -37,6 +37,23 @@ function makeGroundIcon(size = 18): L.DivIcon {
   });
 }
 
+/** Tiny colored dot used instead of the full plane icon once too many
+ * aircraft are on screen at once for individual icons to stay legible or
+ * performant. Keeps the altitude color-coding, drops heading/shape detail. */
+function makeDotIcon(color: string, size = 7): L.DivIcon {
+  const html = `<div style="
+      width:${size}px;height:${size}px;border-radius:50%;
+      background:${color};
+      box-shadow:0 0 0 1px rgba(255,255,255,0.45), 0 1px 2px rgba(0,0,0,0.6);
+    "></div>`;
+  return L.divIcon({
+    html, className: '',
+    iconSize:      [size, size],
+    iconAnchor:    [size / 2, size / 2],
+    tooltipAnchor: [size / 2 + 3, -size / 2],
+  });
+}
+
 // ── Weather station icon ───────────────────────────────────────────────────
 
 const WMO_EMOJI: Record<number, string> = {
@@ -100,9 +117,16 @@ function makeWeatherIcon(wmoCode: number, tempC: number, windDir: number | null 
 interface Props {
   aircraft: Aircraft;
   onClick?: (a: Aircraft) => void;
+  /** Fired when the pointer enters this marker (used to drive the S2 Trie highlight). */
+  onHover?: (a: Aircraft) => void;
+  /** Fired when the pointer leaves this marker. */
+  onHoverEnd?: () => void;
+  /** When true, renders aircraft (non-weather) markers as tiny dots instead
+   * of full plane icons — used once too many are on screen at once. */
+  simplified?: boolean;
 }
 
-export default function AircraftMarker({ aircraft, onClick }: Props) {
+export default function AircraftMarker({ aircraft, onClick, onHover, onHoverEnd, simplified }: Props) {
   const { id, lat, lon, payload } = aircraft;
 
   // ── Weather station branch ─────────────────────────────────────────────
@@ -135,7 +159,11 @@ export default function AircraftMarker({ aircraft, onClick }: Props) {
       <Marker
         position={[lat, lon]}
         icon={weatherIcon}
-        eventHandlers={{ click: () => onClick?.(aircraft) }}
+        eventHandlers={{
+          click: () => onClick?.(aircraft),
+          mouseover: () => onHover?.(aircraft),
+          mouseout: () => onHoverEnd?.(),
+        }}
       >
         <Tooltip sticky direction="top" offset={[0, -4]} opacity={1}>
           <div style={{
@@ -205,8 +233,10 @@ export default function AircraftMarker({ aircraft, onClick }: Props) {
   const type  = getAircraftType(payload);
 
   const icon = useMemo(
-    () => payload.on_ground ? makeGroundIcon() : makePlaneIcon(payload.heading, color),
-    [payload.heading, payload.on_ground, color],
+    () => simplified
+      ? makeDotIcon(color)
+      : payload.on_ground ? makeGroundIcon() : makePlaneIcon(payload.heading, color),
+    [payload.heading, payload.on_ground, color, simplified],
   );
 
   // Build trail from history
@@ -259,7 +289,11 @@ export default function AircraftMarker({ aircraft, onClick }: Props) {
       <Marker
         position={[lat, lon]}
         icon={icon}
-        eventHandlers={{ click: () => onClick?.(aircraft) }}
+        eventHandlers={{
+          click: () => onClick?.(aircraft),
+          mouseover: () => onHover?.(aircraft),
+          mouseout: () => onHoverEnd?.(),
+        }}
         zIndexOffset={payload.on_ground ? 0 : 100}
       >
         <Tooltip sticky direction="top" offset={[0, -4]} opacity={1} className="">

@@ -66,6 +66,41 @@ pub async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
+#[derive(Serialize)]
+pub struct TrieNodeDto {
+    id: String,
+    token: String,
+}
+
+#[derive(Serialize)]
+pub struct TrieSnapshot {
+    s2_level: u8,
+    count: usize,
+    nodes: Vec<TrieNodeDto>,
+}
+
+/// GET /api/trie — flat list of {id, token} for every entry currently held
+/// in the in-memory S2 trie. The frontend reconstructs the branch/leaf
+/// structure client-side by grouping tokens on shared hex-character
+/// prefixes — the same walk `GeoTrie::insert` performs internally — so no
+/// new introspection method is needed on `GeoTrie` itself.
+pub async fn trie_snapshot(State(st): State<Arc<AppState>>) -> Json<TrieSnapshot> {
+    let trie = st.trie.read().await;
+    let nodes: Vec<TrieNodeDto> = trie
+        .all_entries()
+        .into_iter()
+        .map(|e| {
+            let token = trie.cell_token(e.lat, e.lon);
+            TrieNodeDto { id: e.id, token }
+        })
+        .collect();
+    Json(TrieSnapshot {
+        s2_level: trie.s2_level,
+        count: nodes.len(),
+        nodes,
+    })
+}
+
 /// On-demand full metadata + last-3-positions history from SQLite.
 /// Only called when zoomed in to < 5 aircraft — keeps Redis payload minimal.
 pub async fn aircraft_detail(

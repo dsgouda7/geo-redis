@@ -140,7 +140,7 @@ export default function WeatherPanel() {
             background: '#020617', padding: '6px 8px', borderRadius: 4,
             fontFamily: 'monospace',
           }}>
-            cargo run --release -p georedis-weather
+            cargo run --release -p proxima-weather
           </code>
         </div>
       )}

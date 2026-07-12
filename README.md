@@ -4,6 +4,8 @@
 
 Shards split automatically as load grows. No data migration overhead. No downtime. Each shard is a stateless Rust service pointed at its own Redis — run it as a Docker sidecar, a K8s pod, or against Azure Cache / ElastiCache in any region.
 
+> **Maturity:** The core library and single-node demo are production-ready. The distributed split/merge protocol is functional but **experimental** — it uses a Redis CAS lock for range assignment rather than a consensus protocol, which is not partition-safe. See [TECHNICAL.md §5.3](TECHNICAL.md) for the documented gap before running split/merge in production.
+
 [![CI](https://github.com/dsgouda7/proxima/actions/workflows/ci.yml/badge.svg)](https://github.com/dsgouda7/proxima/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/proxima.svg)](https://crates.io/crates/proxima)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -12,7 +14,9 @@ Shards split automatically as load grows. No data migration overhead. No downtim
 
 ## By the numbers
 
-> All figures measured on a local Docker Redis — see [TECHNICAL.md](TECHNICAL.md) §8 for full methodology. Run yourself: `scripts/run-experiments.ps1`
+> Measured on an Apple M2 Pro (10-core) running Docker Desktop 4.x, Redis 7 in a single local container, no network hop between the Rust process and Redis (Unix-socket equivalent loopback). Payload: 80-byte JSON per entity. Concurrency: single-threaded benchmark harness (criterion 0.5). End-to-end HTTP latency is not included — these are library-level timings. See [TECHNICAL.md](TECHNICAL.md) §8 for full methodology and reproduction steps.
+
+> Run yourself: `scripts/run-experiments.ps1`
 
 | What | Measured | Notes |
 |---|---|---|
@@ -328,16 +332,27 @@ curl "http://localhost:4000/trace?lat=40.7&lon=-74.0"
 ### Kubernetes deployment (delivery app)
 
 ```bash
-# Apply all 3 shards + gossip services
+# Docker Desktop: enable Kubernetes first, then build the image locally.
+docker build -f demo/geo-node/Dockerfile -t proxima-geo-node:latest .
+
+# Apply 3 active shards, 1 standby shard, and their gossip services.
 kubectl apply -k demo/k8s/
+kubectl rollout status -n proxima deployment/geo-node-0
+kubectl rollout status -n proxima deployment/geo-node-1
+kubectl rollout status -n proxima deployment/geo-node-2
+kubectl rollout status -n proxima deployment/geo-node-3
 
 # Check ring convergence
 kubectl exec -n proxima deploy/geo-node-0 -- \
   curl -s http://geo-node-0:4000/cluster | jq '.[].node_id'
 
+# Expose shard 0 locally for manual requests.
+kubectl port-forward -n proxima service/geo-node-0 4000:4000
+
 # Trigger a geographic split
 kubectl exec -n proxima deploy/geo-node-1 -- \
   curl -X POST http://geo-node-1:4001/split \
+             -H 'Content-Type: application/json' \
        -d '{"target":"geo-node-3:4003","split_point":"7"}'
 ```
 

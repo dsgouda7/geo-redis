@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { triggerSplit, triggerMerge } from '../hooks/useCluster';
+import { CLUSTER_NODES } from '../config';
 import type { ClusterEvent, NodeInfo } from '../types';
 
 interface Props {
@@ -126,7 +127,7 @@ export default function ControlPanel({ onEvent, reachable, nodes = [] }: Props) 
       </button>
 
       <a
-        href="http://localhost:4000/cluster"
+        href={`${CLUSTER_NODES[0]}/cluster`}
         target="_blank" rel="noopener noreferrer"
         style={{ ...btnBase, background: '#1e3a5f', color: '#94a3b8', textDecoration: 'none' }}
       >

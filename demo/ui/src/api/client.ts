@@ -1,4 +1,4 @@
-export type { Aircraft, AircraftResponse, MetricsSnapshot, MetricsResponse } from '../types';
+export type { Aircraft, AircraftResponse, MetricsSnapshot, MetricsResponse, TrieSnapshot } from '../types';
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -13,6 +13,9 @@ export const fetchAllAircraft = (zoom?: number) =>
 
 export const fetchMetrics = () =>
   get<import('../types').MetricsResponse>('/api/metrics');
+
+export const fetchTrieSnapshot = () =>
+  get<import('../types').TrieSnapshot>('/api/trie');
 
 export function fetchRegion(s: number, w: number, n: number, e: number, zoom?: number) {
   const base = `/api/region?s=${s}&w=${w}&n=${n}&e=${e}`;

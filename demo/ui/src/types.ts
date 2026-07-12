@@ -38,6 +38,19 @@ export interface Aircraft {
 
 export type AircraftType = 'widebody' | 'narrowbody' | 'turboprop' | 'helicopter' | 'small' | 'ground';
 
+/** One occupied leaf in the in-memory S2 trie — an entity plus its cell token. */
+export interface TrieNode {
+  id:    string;
+  token: string;
+}
+
+/** Flat snapshot of every entry currently held in the S2 trie. */
+export interface TrieSnapshot {
+  s2_level: number;
+  count:    number;
+  nodes:    TrieNode[];
+}
+
 export interface AircraftResponse { count: number; aircraft: Aircraft[]; }
 
 export interface MetricsSnapshot {

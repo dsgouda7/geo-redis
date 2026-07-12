@@ -1,0 +1,39 @@
+/* Compact box styling for the S2 Trie root→leaf breadcrumb path.
+   Deliberately simple — the path is only ever a handful of steps long
+   (token length + 1), so it's laid out as a single wrapped flex row with
+   no connector-line tree layout and no scrollbars needed. */
+
+.trie-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  background: #0f1e33;
+  font-family: monospace;
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.trie-node-prefix {
+  color: #38bdf8;
+  font-weight: 600;
+}
+.trie-node-count {
+  color: #64748b;
+  font-size: 9px;
+}
+
+/* The exact leaf node holding the hovered/selected entry */
+.trie-node.is-leaf {
+  background: rgba(34,197,94,0.28);
+  border-color: #22c55e;
+  box-shadow: 0 0 0 1px rgba(34,197,94,0.4);
+}
+.trie-node.is-leaf .trie-node-prefix {
+  color: #86efac;
+}

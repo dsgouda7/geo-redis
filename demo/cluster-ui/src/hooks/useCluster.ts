@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { ClusterSnapshot, ClusterEvent, NodeInfo, ThroughputPoint } from '../types';
+import { CLUSTER_NODES, STANDBY_TARGET } from '../config';
 
-const NODES = ['http://localhost:4000','http://localhost:4001',
-               'http://localhost:4002','http://localhost:4003'];
+const NODES = CLUSTER_NODES;
 const MAX_HISTORY  = 90;   // 90 s rolling window
 const POLL_INTERVAL = 2000;
 
@@ -41,7 +41,7 @@ export function useCluster() {
       setReachable(nodes.length > 0);
 
       if (nodes.length === 0) {
-        addEvent('Cluster unreachable — waiting for nodes on :4000–:4003', 'warn');
+        addEvent(`Cluster unreachable — waiting for nodes on ${NODES.join(', ')}`, 'warn');
         return;
       }
 
@@ -87,7 +87,7 @@ export function useCluster() {
 
 export async function triggerMerge(absorbAddr: string): Promise<string> {
   const body = JSON.stringify({ absorb: absorbAddr });
-  const r = await fetch('http://localhost:4000/merge', {
+  const r = await fetch(`${NODES[0]}/merge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body,
@@ -97,9 +97,9 @@ export async function triggerMerge(absorbAddr: string): Promise<string> {
 }
 export async function triggerSplit(splitPoint?: string): Promise<string> {
   const body = splitPoint
-    ? JSON.stringify({ target: 'geo-node-3:4003', split_point: splitPoint })
-    : JSON.stringify({ target: 'geo-node-3:4003' });
-  const r = await fetch('http://localhost:4000/split', {
+    ? JSON.stringify({ target: STANDBY_TARGET, split_point: splitPoint })
+    : JSON.stringify({ target: STANDBY_TARGET });
+  const r = await fetch(`${NODES[0]}/split`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body,

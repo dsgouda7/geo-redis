@@ -28,10 +28,12 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = Config::from_env();
     let metrics = Metrics::new();
-    let store = RedisStore::with_config(&cfg.redis_url, Arc::clone(&metrics), cfg.entity_ttl_secs)?;
+    let store = RedisStore::with_config(&cfg.redis_url, Arc::clone(&metrics), cfg.entity_ttl_secs)?
+        .with_namespace(&cfg.key_namespace);
     let database = Arc::new(db::Db::open(&cfg.sqlite_path)?);
 
     tracing::info!("Redis: {}", cfg.redis_url);
+    tracing::info!("Key namespace: {}", cfg.key_namespace);
     tracing::info!("SQLite: {}", cfg.sqlite_path);
     tracing::info!(
         "S2 level: {}, poll interval: {}s",
@@ -127,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/aircraft/:id", get(routes::aircraft_detail))
         .route("/api/region", get(routes::region_aircraft))
         .route("/api/metrics", get(routes::get_metrics))
+        .route("/api/trie", get(routes::trie_snapshot))
         .route("/api/health", get(routes::health))
         .layer(CorsLayer::permissive())
         .with_state(state);

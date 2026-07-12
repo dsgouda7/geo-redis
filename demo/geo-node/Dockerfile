@@ -12,29 +12,38 @@ COPY demo/geo-node/Cargo.toml    demo/geo-node/
 COPY demo/server/Cargo.toml      demo/server/
 COPY demo/loadtest/Cargo.toml    demo/loadtest/
 COPY demo/weather-server/Cargo.toml demo/weather-server/
+COPY demo/experiments/Cargo.toml demo/experiments/
 
-# tests/cluster_integration is a workspace member — stub it so cargo resolves
+# cluster-test is a workspace member — stub it so cargo resolves
 COPY demo/cluster-test/Cargo.toml demo/cluster-test/
 
 # Stub all source files so cargo can resolve deps
 RUN mkdir -p lib/src demo/geo-node/src demo/server/src demo/loadtest/src \
-             demo/weather-server/src demo/cluster-test/src && \
+             demo/weather-server/src demo/cluster-test/src demo/experiments/src && \
     echo "fn main(){}" > demo/geo-node/src/main.rs && \
     echo "fn main(){}" > demo/server/src/main.rs && \
     echo "fn main(){}" > demo/loadtest/src/main.rs && \
     echo "fn main(){}" > demo/weather-server/src/main.rs && \
     echo "fn main(){}" > demo/cluster-test/src/main.rs && \
+    echo "fn main(){}" > demo/experiments/src/main.rs && \
     echo "" > lib/src/lib.rs
 
 # Cache dependencies only
-RUN cargo build --release -p georedis-geo-node 2>/dev/null; true
+RUN cargo build --release -p proxima-geo-node 2>/dev/null; true
 
 # Copy real source
 COPY lib/ lib/
 COPY demo/geo-node/ demo/geo-node/
 
-RUN touch lib/src/lib.rs demo/geo-node/src/main.rs && \
-    cargo build --release -p georedis-geo-node
+# Verify the ZADD fix is present before compiling (fails loudly if COPY served stale cache)
+RUN grep -q 'cmd("ZADD")' lib/src/store.rs && \
+    echo "ZADD fix confirmed in store.rs" || \
+    { echo "ERROR: COPY served stale store.rs — fix not found"; exit 1; }
+
+# Remove pre-built artifacts for our own crates so Cargo always recompiles
+# them from the current source, avoiding stale-cache bugs.
+RUN cargo clean -p proxima -p proxima-geo-node && \
+    cargo build --release -p proxima-geo-node
 
 # ── Runtime stage ─────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -43,11 +52,11 @@ RUN apt-get update && \
     apt-get install -y ca-certificates libssl3 curl && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/georedis-geo-node /usr/local/bin/
+COPY --from=builder /app/target/release/proxima-geo-node /usr/local/bin/
 
 EXPOSE 4000
 
 HEALTHCHECK --interval=5s --timeout=3s --retries=5 \
     CMD curl -f http://localhost:${HTTP_PORT:-4000}/health || exit 1
 
-CMD ["georedis-geo-node"]
+CMD ["proxima-geo-node"]

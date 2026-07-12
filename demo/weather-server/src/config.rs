@@ -7,6 +7,11 @@ pub struct Config {
     pub s2_level: u8,
     pub sqlite_path: String,
     pub entity_ttl_secs: u64,
+    /// Redis key namespace prefix. Defaults to "proxima-weather" so this
+    /// app's keys never collide with other demos (aircraft tracker, geo-node
+    /// cluster) that may share the same Redis instance. Override via
+    /// KEY_NAMESPACE.
+    pub key_namespace: String,
     /// Milliseconds between successive METAR event insertions (default 5ms →
     /// ~5 000 stations stream in ~25 s, map fills up visually in real-time).
     pub stream_rate_ms: u64,
@@ -27,6 +32,7 @@ impl Config {
             s2_level: env_parse("S2_LEVEL", 9),
             sqlite_path: env("SQLITE_PATH", "proxima-weather.db"),
             entity_ttl_secs: env_parse("ENTITY_TTL_SECS", proxima::store::DEFAULT_ENTITY_TTL_SECS),
+            key_namespace: env("KEY_NAMESPACE", "proxima-weather"),
             stream_rate_ms: env_parse("STREAM_RATE_MS", 5u64),
             max_clusters: env_parse("MAX_CLUSTERS", 100usize),
             cluster_level: std::env::var("CLUSTER_LEVEL")

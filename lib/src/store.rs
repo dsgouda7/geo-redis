@@ -248,7 +248,10 @@ impl RedisStore {
                     pipe.sadd(self.k_cell(&token), &entry.id).ignore();
                     pipe.set_ex(self.k_location(&entry.id), &token, ttl)
                         .ignore();
-                    pipe.zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64)
+                    pipe.cmd("ZADD")
+                        .arg(&written_at_key)
+                        .arg(entry.written_at as f64)
+                        .arg(entry.id.as_str())
                         .ignore();
                     new_cells.insert(token);
                 }
@@ -414,7 +417,10 @@ impl RedisStore {
                     pipe.set_ex(self.k_entity(&entry.id), &json, ttl).ignore();
                     pipe.sadd(self.k_cell(token), &entry.id).ignore();
                     pipe.set_ex(self.k_location(&entry.id), token, ttl).ignore();
-                    pipe.zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64)
+                    pipe.cmd("ZADD")
+                        .arg(&written_at_key)
+                        .arg(entry.written_at as f64)
+                        .arg(entry.id.as_str())
                         .ignore();
                 }
                 pipe.query_async::<()>(&mut conn).await?;

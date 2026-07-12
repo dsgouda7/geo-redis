@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Live METAR weather demo — proxies to georedis-weather on :3001
+// Live METAR weather demo — proxies to proxima-weather on :3001
 export default defineConfig({
   plugins: [react()],
   server: {

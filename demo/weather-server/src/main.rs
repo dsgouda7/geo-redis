@@ -52,12 +52,14 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = Config::from_env();
     let metrics = Metrics::new();
-    let store = RedisStore::with_config(&cfg.redis_url, Arc::clone(&metrics), cfg.entity_ttl_secs)?;
+    let store = RedisStore::with_config(&cfg.redis_url, Arc::clone(&metrics), cfg.entity_ttl_secs)?
+        .with_namespace(&cfg.key_namespace);
     let database = Arc::new(db::Db::open(&cfg.sqlite_path)?);
     let (tx, _) = broadcast::channel::<StationEvent>(2048);
 
     tracing::info!("Source: aviationweather.gov bulk METAR dump (updated every 5 min)");
     tracing::info!("Redis:  {}", cfg.redis_url);
+    tracing::info!("Key namespace: {}", cfg.key_namespace);
     tracing::info!("SQLite: {}", cfg.sqlite_path);
     tracing::info!(
         "S2 level: {}, poll: {}s, stream rate: {}ms/event, max clusters: {}",
@@ -238,6 +240,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/aircraft/:id", get(routes::station_detail))
         .route("/api/region", get(routes::region_stations))
         .route("/api/metrics", get(routes::get_metrics))
+        .route("/api/trie", get(routes::trie_snapshot))
         .route("/api/stream", get(routes::sse_stream))
         .route("/health", get(routes::health))
         .layer(CorsLayer::permissive())

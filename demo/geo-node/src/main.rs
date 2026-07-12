@@ -279,6 +279,7 @@ async fn main() -> Result<()> {
         .route("/split", post(route_trigger_split))
         .route("/merge", post(route_trigger_merge))
         .route("/assign-range", put(route_assign_range))
+        .route("/entity/:id", delete(route_delete_entity))
         .route_layer(middleware::from_fn_with_state(state.clone(), api_key_guard));
 
     let app = Router::new()
@@ -291,7 +292,6 @@ async fn main() -> Result<()> {
         .route("/metrics/prom", get(route_metrics_prometheus))
         .route("/trace", get(route_trace))
         .route("/delta-sync", get(route_delta_sync)) // read-only, no auth
-        .route("/entity/:id", delete(route_delete_entity))
         .merge(write_routes)
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -1133,7 +1133,10 @@ async fn route_ingest_batch(
             .ignore()
             .set_ex(&loc_key, &new_token, ttl)
             .ignore()
-            .zadd(&written_at_key, entry.id.as_str(), entry.written_at as f64)
+            .cmd("ZADD")
+            .arg(&written_at_key)
+            .arg(entry.written_at as f64)
+            .arg(entry.id.as_str())
             .ignore();
         let _: () = pipe.query_async(&mut conn).await.unwrap_or(());
     }
