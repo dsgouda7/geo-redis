@@ -285,6 +285,7 @@ async fn main() -> Result<()> {
 // This proves geographic routing: North American aircraft → shard-0,
 // European aircraft → shard-1, etc.
 
+#[allow(clippy::too_many_arguments)]
 async fn sharded_writer_task(
     id:       usize,
     conns:    Arc<Vec<ConnectionManager>>,
@@ -569,7 +570,7 @@ fn print_results(a: &Args, m: &Metrics, shards: &[ShardSpec]) {
     println!("║  WRITES");
     println!("║    batches    : {}  ({:.1} batch/s)", wo, wo as f64 / dur);
     println!("║    aircraft   : {}  ({} aircraft/s)", fmt_num(wa), fmt_num((wa as f64/dur) as u64));
-    if wh.len() > 0 {
+    if !wh.is_empty() {
         println!("║    p50 {:.1}ms  p95 {:.1}ms  p99 {:.1}ms  max {:.1}ms",
             pct(&wh,0.50), pct(&wh,0.95), pct(&wh,0.99), wh.max() as f64/1000.0);
     } else { println!("║    (no samples)"); }
@@ -591,7 +592,7 @@ fn print_results(a: &Args, m: &Metrics, shards: &[ShardSpec]) {
     println!("║  READS");
     println!("║    queries    : {}  ({:.1} query/s)", ro, ro as f64/dur);
     println!("║    cache miss : {} ({:.1}%)", miss, if ro>0 { miss as f64/ro as f64*100.0 } else { 0.0 });
-    if rh.len() > 0 {
+    if !rh.is_empty() {
         println!("║    p50 {:.2}ms  p95 {:.2}ms  p99 {:.2}ms  max {:.2}ms",
             pct(&rh,0.50), pct(&rh,0.95), pct(&rh,0.99), rh.max() as f64/1000.0);
     }

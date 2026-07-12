@@ -4,23 +4,21 @@
 /// containers (via testcontainers).  No geo-node HTTP server is needed — the
 /// test drives `RedisStore` directly so it stays fast and deterministic.
 ///
-/// Phases
-/// ──────
+/// Phases:
 ///   1. SETUP            — start two Redis containers (simulating two shards)
 ///   2. HIGH-VOLUME WRITE — persist 50 k entities across two RedisStore instances
 ///   3. SPLIT SEEDING    — simulate split: collect shard-0 entities >= midpoint,
-///                         call merge_entries on shard-1 (snapshot-first seeding)
+///      call merge_entries on shard-1 (snapshot-first seeding)
 ///   4. FRESHNESS CHECK  — re-ingest stale + fresh versions, assert merge_entries
-///                         only applies the fresh one
+///      only applies the fresh one
 ///   5. DELTA SYNC       — write to shard-0 after seeding, call entities_written_after,
-///                         verify shard-1 catches up correctly
+///      verify shard-1 catches up correctly
 ///   6. REMOVE RANGE     — call trie.remove_range on shard-0 subset, verify pruning
 ///   7. CONSISTENCY      — assert total key count equals expected, no duplicates
 ///
 /// Run:
 ///   cargo run -p proxima-cluster-test
 ///   cargo run -p proxima-cluster-test -- --verbose
-
 use anyhow::Result;
 use proxima::{GeoEntry, GeoTrie, Metrics, RedisStore};
 use rand::{Rng, SeedableRng};
@@ -286,7 +284,7 @@ async fn main() -> Result<()> {
         let helper    = GeoTrie::new(S2_LEVEL);
         let token     = helper.cell_token(51.5, -0.1);  // London
         // This might be empty depending on random placement, but should not error
-        let _entries  = store0.query_region(&[token.clone()]).await?;
+        let _entries  = store0.query_region(std::slice::from_ref(&token)).await?;
         Ok::<_, anyhow::Error>(format!("query_region for token {} completed", &token[..6]))
     });
 

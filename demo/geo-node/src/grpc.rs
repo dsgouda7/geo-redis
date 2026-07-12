@@ -85,7 +85,7 @@ pub struct GeoRedisService { pub state: crate::AppState }
 impl GeoRedisGrpc for GeoRedisService {
     async fn insert(&self, req: Request<GrpcGeoEntry>) -> Result<Response<InsertResponse>, Status> {
         let e   = req.into_inner();
-        let ttl = self.state.cfg.entity_ttl_secs as u64;
+        let ttl = self.state.cfg.entity_ttl_secs;
         let s2l = self.state.cfg.s2_level;
         let geo = GeoEntry {
             id: e.id.clone(), lat: e.lat, lon: e.lon,

@@ -120,7 +120,7 @@ impl RedisStore {
         entity_ttl_secs: u64,
     ) -> Result<Self> {
         let client = redis::cluster::ClusterClient::new(node_urls)
-            .map_err(|e| crate::Error::Redis(e))?;
+            .map_err(crate::Error::Redis)?;
         Ok(Self {
             client:          RedisClientKind::Cluster(client),
             metrics,
@@ -434,32 +434,33 @@ impl RedisStore {
 /// automatically when the implementor itself is `Send + Sync`.
 pub trait GeoStore: Send + Sync {
     /// Idempotent, freshness-ordered upsert.
-    ///
-    /// An entry is written only when `entry.written_at ≥` the score already
-    /// in the `written_at` sorted set.  A stale snapshot can never overwrite
-    /// a live write.  Returns the number of entries actually written.
-    async fn merge_entries(&self, entries: &[GeoEntry], s2_level: u8) -> Result<usize>;
+    fn merge_entries<'a>(
+        &'a self, entries: &'a [GeoEntry], s2_level: u8,
+    ) -> impl std::future::Future<Output = Result<usize>> + Send + 'a;
 
     /// Returns every entity in `[prefix_start, prefix_end)` whose `written_at`
     /// timestamp is strictly greater than `since_ms`.
-    ///
-    /// Used for delta-sync catch-up on bootstrapping shards.
-    async fn entities_written_after(
-        &self,
+    fn entities_written_after<'a>(
+        &'a self,
         since_ms:     u64,
-        prefix_start: &str,
-        prefix_end:   &str,
-    ) -> Result<Vec<GeoEntry>>;
+        prefix_start: &'a str,
+        prefix_end:   &'a str,
+    ) -> impl std::future::Future<Output = Result<Vec<GeoEntry>>> + Send + 'a;
 
-    /// Scans the `written_at` sorted set and removes members whose backing
-    /// entity key has already expired.  Call periodically to keep ZSET bounded.
-    async fn prune_written_at(&self) -> Result<usize>;
+    /// Scans the `written_at` sorted set and removes stale members.
+    fn prune_written_at(
+        &self,
+    ) -> impl std::future::Future<Output = Result<usize>> + Send + '_;
 
     /// Bulk-replaces the entire active entity set from a `GeoTrie` snapshot.
-    async fn persist_trie(&self, trie: &GeoTrie) -> Result<()>;
+    fn persist_trie<'a>(
+        &'a self, trie: &'a GeoTrie,
+    ) -> impl std::future::Future<Output = Result<()>> + Send + 'a;
 
     /// Returns all entities whose S2 cell tokens appear in `tokens`.
-    async fn query_region(&self, tokens: &[String]) -> Result<Vec<GeoEntry>>;
+    fn query_region<'a>(
+        &'a self, tokens: &'a [String],
+    ) -> impl std::future::Future<Output = Result<Vec<GeoEntry>>> + Send + 'a;
 
     /// Access runtime read/write latency metrics.
     fn metrics(&self) -> &Arc<Metrics>;

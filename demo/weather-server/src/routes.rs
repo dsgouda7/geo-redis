@@ -24,6 +24,7 @@ pub struct AircraftParams {
 #[derive(Deserialize)]
 pub struct RegionParams {
     s: f64, w: f64, n: f64, e: f64,
+    #[allow(dead_code)]
     zoom: Option<u8>,
 }
 

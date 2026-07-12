@@ -5,8 +5,7 @@
 /// (~5 000–8 000 stations).  A single file download = no per-request rate limiting.
 ///
 /// This module downloads the file, decompresses it in-memory, and parses each row
-/// into a `BulkMETAR` struct ready to be streamed into the georedis trie.
-
+/// into a `BulkMETAR` struct ready to be streamed into the proxima trie.
 use std::io::Read;
 use flate2::read::GzDecoder;
 use std::collections::HashMap;

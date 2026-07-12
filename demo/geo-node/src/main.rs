@@ -704,7 +704,7 @@ async fn route_trigger_split(
 
     Ok(Json(SplitResponse {
         migrated_keys:  migrated,
-        split_point:    split_point,
+        split_point,
         new_prefix_end: old_end,
     }))
 }
@@ -973,7 +973,7 @@ async fn route_ingest_batch(
         return StatusCode::SERVICE_UNAVAILABLE;
     };
 
-    let ttl      = s.cfg.entity_ttl_secs as u64;
+    let ttl = s.cfg.entity_ttl_secs;
     let now_ms   = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
     let written_at_key = s.store.k_written_at();

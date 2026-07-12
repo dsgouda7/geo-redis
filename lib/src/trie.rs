@@ -179,7 +179,7 @@ fn prune_remove(node: &mut TrieNode, bytes: &[u8], id: &str) -> bool {
     // Recurse — mutable borrow of child is scoped to this block
     let removed = {
         let child = node.children.get_mut(&ch).unwrap();
-        prune_remove(&mut **child, &bytes[1..], id)
+        prune_remove(child, &bytes[1..], id)
     };
 
     // After the recursive call the borrow has ended — safe to inspect + prune
