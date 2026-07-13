@@ -78,6 +78,9 @@ export default function AppRadio() {
     });
   }, []);
 
+  // Set tab title once on mount.
+  useEffect(() => { document.title = 'proxima — Radio Explorer'; }, []);
+
   // Metrics poller.
   useEffect(() => {
     const poll = async () => { try { setMetrics(await fetchMetrics()); } catch { /**/ } };

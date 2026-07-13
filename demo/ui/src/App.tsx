@@ -114,6 +114,13 @@ export default function App() {
   const handleHover = useCallback((a: Aircraft) => setHoveredId(a.id), []);
   const handleHoverEnd = useCallback(() => setHoveredId(null), []);
 
+  // Keep the browser-tab title in sync with the detected data mode.
+  useEffect(() => {
+    document.title = isWeather
+      ? 'proxima — Live Weather Stations'
+      : 'proxima — Live Aircraft Tracker';
+  }, [isWeather]);
+
   // Metrics poller (every 10s)
   useEffect(() => {
     const poll = async () => { try { setMetrics(await fetchMetrics()); } catch { /**/ } };
