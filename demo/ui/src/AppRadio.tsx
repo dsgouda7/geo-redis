@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { MapContainer, TileLayer, useMapEvents } from 'react-leaflet';
 import type { Map as LeafletMap } from 'leaflet';
 import { fetchAllAircraft, fetchRegion, fetchMetrics } from './api/client';
-import { Aircraft, MetricsResponse } from './types';
+import { Aircraft, MetricsResponse, RadioStationInfo } from './types';
 import RadioMarker from './components/RadioMarker';
 import RadioFlyout from './components/RadioFlyout';
 import MetricsPanel from './components/MetricsPanel';
@@ -36,12 +36,16 @@ function fire(map: LeafletMap, cb: (s:number,w:number,n:number,e:number,z:number
 }
 
 export default function AppRadio() {
-  const [clusters,  setClusters]  = useState<Aircraft[]>([]);
-  const [metrics,   setMetrics]   = useState<MetricsResponse | null>(null);
-  const [status,    setStatus]    = useState('Loading radio stations…');
-  const [zoom,      setZoom]      = useState(3);
-  const [selected,  setSelected]  = useState<Aircraft | null>(null);
-  const mapRef = useRef<LeafletMap | null>(null);
+  const [clusters,       setClusters]       = useState<Aircraft[]>([]);
+  const [metrics,        setMetrics]        = useState<MetricsResponse | null>(null);
+  const [status,         setStatus]         = useState('Loading radio stations…');
+  const [zoom,           setZoom]           = useState(3);
+  const [selected,       setSelected]       = useState<Aircraft | null>(null);
+  const [playing,        setPlaying]        = useState<string | null>(null);
+  const [playingStation, setPlayingStation] = useState<RadioStationInfo | null>(null);
+  const [playError,      setPlayError]      = useState<string | null>(null);
+  const mapRef   = useRef<LeafletMap | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const isLeaf = zoom >= LEAF_ZOOM;
 
@@ -54,15 +58,17 @@ export default function AppRadio() {
 
     try {
       const { s: cs, w: cw, n: cn, e: ce } = clampBounds(s, w, n, e);
+      const t0 = performance.now();
       const res = z >= REGION_ZOOM
         ? await fetchRegion(cs, cw, cn, ce, z)
         : await fetchAllAircraft(z);
+      const queryMs = Math.round(performance.now() - t0);
 
       setClusters(res.aircraft);
       setStatus(
         z >= LEAF_ZOOM
-          ? `${res.count.toLocaleString()} station groups · zoom ${z} · click a marker to browse`
-          : `${res.count.toLocaleString()} clusters · zoom in to browse channels`
+          ? `${res.count.toLocaleString()} station groups · ${queryMs}ms · click to play`
+          : `${res.count.toLocaleString()} clusters · ${queryMs}ms spatial query · zoom in to browse`
       );
     } catch {
       setStatus('API unreachable');
@@ -70,12 +76,46 @@ export default function AppRadio() {
   }, []);
 
   const handleMarkerClick = useCallback((a: Aircraft) => {
-    // Only leaf-level clusters open the flyout.
     setSelected(a);
-    // Fly the map to the clicked cluster.
     mapRef.current?.flyTo([a.lat, a.lon], Math.max(mapRef.current.getZoom(), LEAF_ZOOM), {
       animate: true, duration: 0.7,
     });
+  }, []);
+
+  const handlePlay = useCallback((station: RadioStationInfo) => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
+      audioRef.current = null;
+    }
+    setPlayError(null);
+    if (playing === station.uuid) {
+      setPlaying(null);
+      setPlayingStation(null);
+      return;
+    }
+    const audio = new Audio(station.stream_url);
+    audio.onerror = () => {
+      setPlayError(`Can't connect to “${station.name}”`);
+      setPlaying(null);
+      setPlayingStation(null);
+      audioRef.current = null;
+    };
+    audio.play().catch(() => {});
+    audioRef.current = audio;
+    setPlaying(station.uuid);
+    setPlayingStation(station);
+  }, [playing]);
+
+  const handleStop = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
+      audioRef.current = null;
+    }
+    setPlaying(null);
+    setPlayingStation(null);
+    setPlayError(null);
   }, []);
 
   // Set tab title once on mount.
@@ -104,9 +144,33 @@ export default function AppRadio() {
         <span style={{ color: '#94a3b8', fontSize: 12 }}>Live Radio Explorer</span>
         <span style={{
           marginLeft: 'auto', fontSize: '0.72rem', color: '#64748b',
-          maxWidth: 500, textAlign: 'right', whiteSpace: 'nowrap',
+          maxWidth: 380, textAlign: 'right', whiteSpace: 'nowrap',
           overflow: 'hidden', textOverflow: 'ellipsis',
         }}>{status}</span>
+        {playingStation && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+            background: 'rgba(99,102,241,0.15)',
+            border: '1px solid rgba(99,102,241,0.35)',
+            borderRadius: 20, padding: '3px 10px 3px 8px',
+            fontSize: 11, color: '#a5b4fc',
+          }}>
+            <span style={{ fontSize: 8, color: '#6366f1', animation: 'pulse 1.5s ease-in-out infinite' }}>●</span>
+            <span style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {playingStation.name}
+            </span>
+            <button
+              onClick={handleStop}
+              style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}
+              title="Stop"
+            >⧥</button>
+          </div>
+        )}
+        {playError && !playingStation && (
+          <div style={{ fontSize: 10, color: '#f87171', flexShrink: 0, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            ⚠ {playError}
+          </div>
+        )}
       </header>
 
       <div style={{ flex: 1, position: 'relative' }}>
@@ -139,6 +203,9 @@ export default function AppRadio() {
           <RadioFlyout
             cluster={selected}
             onClose={() => setSelected(null)}
+            playing={playing}
+            onPlay={handlePlay}
+            playError={playError}
           />
         )}
 
@@ -146,6 +213,8 @@ export default function AppRadio() {
           <MetricsPanel
             metrics={metrics}
             entityLabel="Stations"
+            title="S2 Index"
+            hideLatency
           />
         )}
 

@@ -14,6 +14,8 @@ pub struct AppState {
     pub clusters: RwLock<HashMap<u8, Vec<aggregate::RadioCluster>>>,
     /// Total geo-tagged stations downloaded (for the metrics panel).
     pub total_stations: AtomicUsize,
+    /// Unix timestamp (seconds) of the most recent Radio Browser refresh.
+    pub last_refresh: RwLock<Option<u64>>,
 }
 
 #[tokio::main]
@@ -33,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         clusters:       RwLock::new(HashMap::new()),
         total_stations: AtomicUsize::new(0),
+        last_refresh:   RwLock::new(None),
     });
 
     // Initial load — block until we have data before accepting requests.
@@ -103,4 +106,10 @@ async fn rebuild_clusters(
     map.insert(aggregate::LEAF_LEVEL, leaf);
 
     *state.clusters.write().await = map;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    *state.last_refresh.write().await = Some(ts);
 }

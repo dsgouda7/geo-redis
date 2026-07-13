@@ -118,11 +118,13 @@ pub async fn get_metrics(State(st): State<Arc<AppState>>) -> Json<serde_json::Va
         .get(&aggregate::LEAF_LEVEL)
         .map(|v| v.len())
         .unwrap_or(0);
+    let last_sync = *st.last_refresh.read().await;
     Json(serde_json::json!({
         "source":          "Radio Browser (radiobrowser.info)",
         "total_stations":  total,
         "leaf_cells":      leaf_count,
-        "trie_size":       leaf_count,
+        "trie_size":       total,   // total stations — drives the panel count display
+        "last_sync":       last_sync,
         "metrics": {
             "write_count":  0,
             "write_avg_us": 0,

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Aircraft, RadioStationInfo } from '../types';
 
 // Country code → emoji flag (regional indicator letters).
@@ -14,14 +14,10 @@ function countryFlag(cc: string): string {
 function StationRow({
   station,
   isPlaying,
-  isLoading,
-  hasError,
   onToggle,
 }: {
   station: RadioStationInfo;
   isPlaying: boolean;
-  isLoading: boolean;
-  hasError: boolean;
   onToggle: (s: RadioStationInfo) => void;
 }) {
   const flag = countryFlag(station.countrycode);
@@ -100,12 +96,8 @@ function StationRow({
         title={isPlaying ? 'Stop' : 'Play'}
         onClick={e => { e.stopPropagation(); onToggle(station); }}
       >
-        {isLoading ? '…' : isPlaying ? '⏹' : '▶'}
+        {isPlaying ? '⧥' : '▶'}
       </button>
-
-      {hasError && (
-        <span style={{ fontSize: 9, color: '#f87171', marginLeft: 2 }} title="Stream unreachable">⚠</span>
-      )}
     </div>
   );
 }
@@ -115,71 +107,16 @@ function StationRow({
 interface Props {
   cluster: Aircraft;
   onClose: () => void;
+  playing: string | null;
+  onPlay: (s: RadioStationInfo) => void;
+  playError: string | null;
 }
 
-export default function RadioFlyout({ cluster, onClose }: Props) {
+export default function RadioFlyout({ cluster, onClose, playing, onPlay, playError }: Props) {
   const stations: RadioStationInfo[] = cluster.payload.stations ?? [];
   const cellName = cluster.payload.callsign ?? `${stations.length} stations`;
 
-  const [playing, setPlaying]     = useState<string | null>(null);
-  const [loading, setLoading]     = useState<string | null>(null);
-  const [error, setError]         = useState<string | null>(null);
-  const [errorId, setErrorId]     = useState<string | null>(null);
-  const [search, setSearch]       = useState('');
-  const audioRef                  = useRef<HTMLAudioElement | null>(null);
-
-  // Stop audio when flyout closes or cluster changes.
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-        audioRef.current = null;
-      }
-    };
-  }, [cluster.id]);
-
-  const handleToggle = useCallback((station: RadioStationInfo) => {
-    // Stop whatever is playing.
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = '';
-      audioRef.current = null;
-    }
-    setError(null);
-    setErrorId(null);
-
-    if (playing === station.uuid) {
-      setPlaying(null);
-      setLoading(null);
-      return;
-    }
-
-    setLoading(station.uuid);
-    const audio = new Audio(station.stream_url);
-
-    audio.addEventListener('canplay', () => {
-      setLoading(null);
-      setPlaying(station.uuid);
-    }, { once: true });
-
-    audio.onerror = () => {
-      setLoading(null);
-      setPlaying(null);
-      setError(`Can't connect to "${station.name}"`);
-      setErrorId(station.uuid);
-      audioRef.current = null;
-    };
-
-    // Start playing — some streams start immediately, others buffer first.
-    audio.play().catch(() => {
-      // error handled via onerror
-    });
-
-    audioRef.current = audio;
-    // Optimistic: mark as playing immediately (loading indicator shows)
-    setPlaying(station.uuid);
-  }, [playing]);
+  const [search, setSearch] = useState('');
 
   const filtered = search.trim()
     ? stations.filter(s =>
@@ -231,8 +168,8 @@ export default function RadioFlyout({ cluster, onClose }: Props) {
           >✕</button>
         </div>
 
-        {/* Playing indicator */}
-        {playing && (
+        {/* Playing indicator — only when the current stream is from this cluster */}
+        {playing && stations.some(s => s.uuid === playing) && (
           <div style={{
             marginTop: 8, fontSize: 10, color: '#818cf8',
             display: 'flex', alignItems: 'center', gap: 4,
@@ -245,13 +182,13 @@ export default function RadioFlyout({ cluster, onClose }: Props) {
         )}
 
         {/* Error banner */}
-        {error && (
+        {playError && (
           <div style={{
             marginTop: 6, fontSize: 10, color: '#f87171',
             background: 'rgba(248,113,113,0.1)', borderRadius: 4,
             padding: '3px 6px',
           }}>
-            ⚠ {error}
+            ⚠ {playError}
           </div>
         )}
 
@@ -284,9 +221,7 @@ export default function RadioFlyout({ cluster, onClose }: Props) {
               key={s.uuid}
               station={s}
               isPlaying={playing === s.uuid}
-              isLoading={loading === s.uuid && playing !== s.uuid}
-              hasError={errorId === s.uuid}
-              onToggle={handleToggle}
+              onToggle={onPlay}
             />
           ))
         )}

@@ -5,9 +5,13 @@ const ms = (us: number) => `${(us / 1000).toFixed(2)} ms`;
 interface Props {
   metrics: MetricsResponse;
   entityLabel?: string;
+  /** Panel heading; defaults to 'Redis Metrics'. */
+  title?: string;
+  /** When true, hides the write/read latency rows (e.g. for in-memory demos). */
+  hideLatency?: boolean;
 }
 
-export default function MetricsPanel({ metrics: { metrics: m, trie_size, last_sync }, entityLabel = 'Aircraft' }: Props) {
+export default function MetricsPanel({ metrics: { metrics: m, trie_size, last_sync }, entityLabel = 'Aircraft', title = 'Redis Metrics', hideLatency = false }: Props) {
   const syncTime = last_sync
     ? new Date(last_sync * 1000).toLocaleTimeString()
     : 'pending…';
@@ -31,18 +35,22 @@ export default function MetricsPanel({ metrics: { metrics: m, trie_size, last_sy
       }}
     >
       <div style={{ fontWeight: 700, fontSize: '0.82rem', marginBottom: 4 }}>
-        Redis Metrics
+        {title}
       </div>
-      <div>{entityLabel} in trie: <b>{trie_size.toLocaleString()}</b></div>
+      <div>{entityLabel} in index: <b>{trie_size.toLocaleString()}</b></div>
       <div>Last sync: <b>{syncTime}</b></div>
 
       <hr style={{ border: 'none', borderTop: '1px solid #334155', margin: '6px 0' }} />
 
-      <div style={{ color: '#7dd3fc' }}>Writes ({m.write_count.toLocaleString()})</div>
-      <div>avg {ms(m.write_avg_us)} · max {ms(m.write_max_us)}</div>
+      {!hideLatency && (
+        <>
+          <div style={{ color: '#7dd3fc' }}>Writes ({m.write_count.toLocaleString()})</div>
+          <div>avg {ms(m.write_avg_us)} · max {ms(m.write_max_us)}</div>
 
-      <div style={{ color: '#6ee7b7', marginTop: 4 }}>Reads ({m.read_count.toLocaleString()})</div>
-      <div>avg {ms(m.read_avg_us)} · max {ms(m.read_max_us)}</div>
+          <div style={{ color: '#6ee7b7', marginTop: 4 }}>Reads ({m.read_count.toLocaleString()})</div>
+          <div>avg {ms(m.read_avg_us)} · max {ms(m.read_max_us)}</div>
+        </>
+      )}
     </div>
   );
 }
