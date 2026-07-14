@@ -1,6 +1,6 @@
 # proxima — demo suite
 
-Three live demo applications that exercise every layer of the proxima stack:  
+Four live demo applications that exercise every layer of the proxima stack:  
 real-time ingest, S2 spatial indexing, SSE streaming, distributed shard management, and split/merge orchestration.
 
 ---
@@ -36,6 +36,7 @@ Press **Ctrl+C** to stop everything cleanly.
 |-----|-----|---------|
 | http://localhost:5173 | OpenSky aircraft tracker | `proxima-demo` :3000 |
 | http://localhost:5174 | Live METAR weather map | `proxima-weather` :3001 |
+| http://localhost:5175 | USGS earthquake tracker | `earthquake-server` (.NET) :3003 |
 | http://localhost:5176 | Cluster monitor | geo-node cluster :4000–4003 |
 | http://localhost:4000–4003 | Distributed geo-nodes | Docker (with `-WithCluster`) |
 
@@ -72,7 +73,31 @@ Global weather conditions streamed from the [FAA/NWS METAR bulk feed](https://av
 
 ---
 
-## Demo 3 — Distributed cluster monitor (`demo/cluster-ui` · `demo/geo-node`)
+## Demo 3 — USGS Earthquake Tracker (`demo/earthquake-server` · `demo/ui`)
+
+Real-time earthquake visualization using USGS GeoJSON feeds — **powered by .NET 8 + gRPC** to showcase cross-platform proxima integration.
+
+**What it shows:**
+- 100–500 recent earthquakes (past 24 hours, magnitude ≥ 2.5) ingested via **gRPC `InsertBatch`**
+- **Cross-platform .NET client** demonstrating Protobuf code generation from `georedis.proto`
+- Magnitude-based circle sizing and color coding (minor/yellow → great/dark red)
+- USGS alert levels (green/yellow/orange/red border rings) and tsunami warnings
+- Metrics panel with magnitude distribution and recent large quakes (M ≥ 5.0)
+- Poll frequency: **5 minutes** (matches USGS update cycle — no API key required)
+
+**Key paths:** `demo/earthquake-server/` (.NET gRPC client + USGS poller) · `demo/ui/src/AppEarthquake.tsx` (React + Leaflet)
+
+**Start the demo:**
+```bash
+cd demo/earthquake-server
+dotnet run                       # → http://localhost:3003
+cd ../ui
+npm run dev:earthquake           # → http://localhost:5175
+```
+
+---
+
+## Demo 4 — Distributed cluster monitor (`demo/cluster-ui` · `demo/geo-node`)
 
 An operations dashboard for the live 4-node geo-node cluster.  
 Requires `.\scripts\run-demo.ps1 -WithCluster`.
@@ -112,7 +137,7 @@ Requires `.\scripts\run-demo.ps1 -WithCluster`.
 
 ---
 
-## Demo 4 — Cluster integration test (`demo/cluster-test`)
+## Demo 5 — Cluster integration test (`demo/cluster-test`)
 
 A headless Rust test that spins up two Redis containers via testcontainers-rs and runs the full distributed protocol automatically.
 
@@ -141,17 +166,46 @@ cargo run -p proxima-loadtest --release -- --target http://localhost:4000 --rps 
 
 ---
 
+## gRPC cache benchmark (`demo/grpc-bench`)
+
+Head-to-head comparison of two geo-cache strategies measured **over real gRPC**:
+a naive Redis cache (`SUNION` over S2 cell sets + pipelined `GET`) versus
+proxima's in-memory trie-based cache. Both backends sit behind the same
+hand-rolled gRPC service, so the latency delta reflects the cache strategy, not
+the transport. Requires a local Redis (`docker compose up -d` in `demo/`); the
+Redis backend is skipped with a warning if none is reachable.
+
+```powershell
+cargo run -p proxima-grpc-bench --release -- --entities 40000 --queries 1500
+```
+
+Sample output:
+
+```
+===================== gRPC region-query latency =====================
+  backend            p50       p95       p99       max       QPS
+  --------------------------------------------------------------------
+  naive-redis    7.89 ms  11.08 ms  22.99 ms  35.17 ms       120
+  trie           3.68 ms   5.35 ms   6.13 ms  13.95 ms       261
+  ====================================================================
+  -> trie is 2.1x faster than naive-redis at the median (p50).
+```
+
+---
+
 ## Architecture of this demo suite
 
 ```
 demo/
-├── server/          REST backend — OpenSky poller, Redis persistence, SQLite
-├── weather-server/  METAR download, S2 aggregation (auto-level), SSE stream
-├── geo-node/        Distributed node daemon — gossip, split, merge, bootstrap
-├── ui/              React + Leaflet — aircraft tracker + weather map (two Vite configs)
-├── cluster-ui/      React — cluster monitor + topology + charts + weather panel
-├── cluster-test/    Rust integration tests (testcontainers-rs)
-├── loadtest/        Rust load generator
+├── server/             REST backend — OpenSky poller, Redis persistence, SQLite
+├── weather-server/     METAR download, S2 aggregation (auto-level), SSE stream
+├── earthquake-server/  .NET gRPC client — USGS poller, Protobuf code gen
+├── geo-node/           Distributed node daemon — gossip, split, merge, bootstrap
+├── ui/                 React + Leaflet — aircraft + weather + earthquake maps
+├── cluster-ui/         React — cluster monitor + topology + charts + weather panel
+├── cluster-test/       Rust integration tests (testcontainers-rs)
+├── loadtest/           Rust load generator
+├── grpc-bench/         Rust gRPC benchmark — naive Redis vs trie cache
 ├── docker-compose.yml        single Redis for local demos
 └── cluster-compose.yml       4-node geo-node cluster with sidecar Redis instances
 ```
@@ -163,6 +217,7 @@ demo/
 | Tool | Version |
 |------|---------|
 | [Rust](https://rustup.rs) | stable (≥ 1.87) |
+| [.NET SDK](https://dotnet.microsoft.com) | ≥ 8.0 |
 | [Node.js](https://nodejs.org) | ≥ 24 |
 | [Docker Desktop](https://docker.com) | any recent |
 

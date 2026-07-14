@@ -446,7 +446,46 @@ pipelined `SUNION` where the flat store issues 32 sequential `HGETALL` calls.
 The split probe does not reach its requested rate and is not a zero-loss proof.
 Endpoint-level failure-injection remains required validation.
 
-### 8.5 Reproduction
+### 8.5 gRPC over-the-wire cache benchmark
+
+The Criterion and Redis experiment harnesses measure the store in-process. The
+`demo/grpc-bench` harness instead measures the two cache strategies **end-to-end
+over a real gRPC (HTTP/2 loopback) connection**, so the numbers include
+serialization, transport, and async scheduling — the cost an actual client pays.
+
+Both backends sit behind the *same* hand-rolled gRPC service (wire-compatible
+with `demo/geo-node`), differing only in the region-query implementation:
+
+- **naive-redis** — `SUNION` over the covering S2 cell keys, then a pipelined
+  `GET` of every entity. One or more Redis round-trips per query.
+- **trie** — proxima's in-memory `GeoTrie` walked by the S2 viewport tokens.
+  No Redis round-trip.
+
+40,000 entities (uniform random lat/lon), 1,500 timed queries, ±5° viewports,
+S2 level 9; both backends return an identical 184.5 entries/query on average,
+confirming result parity.
+
+| Backend | p50 | p95 | p99 | max | QPS |
+|---|---|---|---|---|---|
+| naive-redis | 7.89 ms | 11.08 ms | 22.99 ms | 35.17 ms | 120 |
+| **trie** | **3.68 ms** | **5.35 ms** | **6.13 ms** | 13.95 ms | **261** |
+
+The trie cache is **2.1× faster at the median** and, more importantly, holds a
+far tighter tail (p99 6.1 ms vs 23.0 ms) because it never leaves the process to
+answer a query. The naive Redis cache pays a `SUNION` plus a pipelined multi-key
+`GET` per request; that round-trip dominates its latency and drives the p99
+blow-up under viewport-scale fan-out. This is the over-the-wire complement to
+§8.3: the trie's structural advantage on multi-token viewport queries survives
+the addition of a real gRPC transport.
+
+Reproduce (requires a local Redis; the Redis backend is skipped with a warning
+if none is reachable):
+
+```powershell
+cargo run -p proxima-grpc-bench --release -- --entities 40000 --queries 1500
+```
+
+### 8.6 Reproduction
 
 ```powershell
 cargo bench -p proxima

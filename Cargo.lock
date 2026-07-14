@@ -2021,6 +2021,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "proxima-grpc-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hdrhistogram",
+ "prost",
+ "proxima",
+ "rand 0.8.6",
+ "redis",
+ "s2",
+ "serde_json",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
 name = "proxima-loadtest"
 version = "0.1.0"
 dependencies = [

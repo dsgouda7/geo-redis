@@ -8,6 +8,7 @@ members  = [
     "demo/geo-node",
     "demo/cluster-test",
     "demo/experiments",
+    "demo/grpc-bench",
 ]
 resolver = "2"
 
