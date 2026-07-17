@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: proxima-ring
-  namespace: proxima
+  name: geo-redis-ring
+  namespace: geo-redis
 data:
   S2_LEVEL: "12"
   # A 3+ member external/managed etcd v3 quorum. Split and merge fail closed
   # when it is unavailable; Redis is data storage, never topology authority.
-  METADATA_ETCD_ENDPOINTS: "http://etcd-client.proxima.svc.cluster.local:2379"
+  METADATA_ETCD_ENDPOINTS: "http://etcd-client.geo-redis.svc.cluster.local:2379"
   GEO_NODE_0_PREFIX_START: ""
   GEO_NODE_0_PREFIX_END:   "5"
   GEO_NODE_1_PREFIX_START: "5"

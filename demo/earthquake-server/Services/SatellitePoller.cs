@@ -6,7 +6,7 @@ using Grpc.Net.Client;
 namespace SatelliteServer.Services;
 
 /// <summary>
-/// Background service that fetches satellite positions and inserts into proxima via gRPC.
+/// Background service that fetches satellite positions and inserts into geo-redis via gRPC.
 /// </summary>
 public class SatellitePoller : BackgroundService
 {

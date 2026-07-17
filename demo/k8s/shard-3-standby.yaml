@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: geo-node-3
-  namespace: proxima
+  namespace: geo-redis
   labels: { app: geo-node, shard: "3", region: standby }
 spec:
   replicas: 1
@@ -51,10 +51,10 @@ spec:
             - { name: PREFIX_START, value: "" }
             - { name: PREFIX_END, value: "" }
             - { name: SEED_PEERS, value: "geo-node-0:4000,geo-node-1:4001,geo-node-2:4002" }
-            - { name: S2_LEVEL, valueFrom: { configMapKeyRef: { name: proxima-ring, key: S2_LEVEL } } }
+            - { name: S2_LEVEL, valueFrom: { configMapKeyRef: { name: geo-redis-ring, key: S2_LEVEL } } }
             - { name: SNAPSHOT_PATH, value: "/data/snapshot.db" }
-            - { name: ENTITY_TTL_SECS, valueFrom: { configMapKeyRef: { name: proxima-ring, key: ENTITY_TTL_SECS } } }
-            - { name: METADATA_ETCD_ENDPOINTS, valueFrom: { configMapKeyRef: { name: proxima-ring, key: METADATA_ETCD_ENDPOINTS } } }
+            - { name: ENTITY_TTL_SECS, valueFrom: { configMapKeyRef: { name: geo-redis-ring, key: ENTITY_TTL_SECS } } }
+            - { name: METADATA_ETCD_ENDPOINTS, valueFrom: { configMapKeyRef: { name: geo-redis-ring, key: METADATA_ETCD_ENDPOINTS } } }
             - { name: RUST_LOG, value: "info" }
           resources:
             requests: { memory: "128Mi", cpu: "100m" }
@@ -80,7 +80,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: geo-node-3
-  namespace: proxima
+  namespace: geo-redis
 spec:
   selector: { app: geo-node, shard: "3" }
   ports:

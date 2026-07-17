@@ -21,7 +21,7 @@ demo/cluster-ui/dist/
 *.key
 
 # ── Local runtime databases ────────────────────────────────────────────────
-# Generated at startup by proxima-demo (SQLite metadata store) and
+# Generated at startup by the geo-redis demo binary (SQLite metadata store) and
 # geo-node (snapshot store). Never commit — they contain ephemeral state.
 *.db
 *.db-shm

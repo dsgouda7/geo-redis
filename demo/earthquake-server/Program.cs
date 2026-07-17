@@ -191,7 +191,7 @@ app.MapGet("/api/terminator", (TerminatorCalculator calculator) =>
 .WithOpenApi();
 
 /// <summary>
-/// Get cluster topology from proxima via gRPC.
+/// Get cluster topology from geo-redis via gRPC.
 /// Shows which shards are active and their key distribution.
 /// </summary>
 app.MapGet("/api/cluster", async ([FromServices] IConfiguration config) =>

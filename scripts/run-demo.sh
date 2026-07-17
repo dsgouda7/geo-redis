@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# proxima — unified demo launcher (Linux / macOS)
+# geo-redis — unified demo launcher (Linux / macOS)
 #
 # Usage:
 #   ./scripts/run-demo.sh                   # starts all servers + UIs

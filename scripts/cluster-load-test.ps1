@@ -1,4 +1,4 @@
-# proxima Cluster Load Test — live dashboard + split/merge demo
+# geo-redis Cluster Load Test — live dashboard + split/merge demo
 #
 # What this does:
 #   Phase 1  SETUP      — Build binaries, start 4-node cluster, wait for gossip
@@ -91,7 +91,7 @@ function Draw-Dashboard {
     function Box { param($t, $c = "Cyan") Write-Host $t.PadRight($w) -ForegroundColor $c -NoNewline; Write-Host "" }
 
     Box "╔$('═' * ($w-2))╗"
-    Box "║  proxima Cluster Load Test — $((Get-Date).ToString('HH:mm:ss'))   Phase: $($script:phase.PadRight(14)) $('▶' * 1)  ║"
+    Box "║  geo-redis Cluster Load Test — $((Get-Date).ToString('HH:mm:ss'))   Phase: $($script:phase.PadRight(14)) $('▶' * 1)  ║"
     Box "╠$('═' * ($w-2))╣"
     Box "║  $('NODE'.PadRight(14)) $('STATUS'.PadRight(14)) $('KEYS'.PadLeft(9))  $('PREFIX RANGE'.PadRight(22)) $('MEM'.PadLeft(7))  ║"
     Box "╠$('═' * ($w-2))╣"

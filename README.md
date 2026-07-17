@@ -470,20 +470,20 @@ docker build -f demo/geo-node/Dockerfile -t proxima-geo-node:latest .
 
 # Apply 3 active shards, 1 standby shard, and their gossip services.
 kubectl apply -k demo/k8s/
-kubectl rollout status -n proxima deployment/geo-node-0
-kubectl rollout status -n proxima deployment/geo-node-1
-kubectl rollout status -n proxima deployment/geo-node-2
-kubectl rollout status -n proxima deployment/geo-node-3
+kubectl rollout status -n geo-redis deployment/geo-node-0
+kubectl rollout status -n geo-redis deployment/geo-node-1
+kubectl rollout status -n geo-redis deployment/geo-node-2
+kubectl rollout status -n geo-redis deployment/geo-node-3
 
 # Check ring convergence
-kubectl exec -n proxima deploy/geo-node-0 -- \
+kubectl exec -n geo-redis deploy/geo-node-0 -- \
   curl -s http://geo-node-0:4000/cluster | jq '.[].node_id'
 
 # Expose shard 0 locally for manual requests.
-kubectl port-forward -n proxima service/geo-node-0 4000:4000
+kubectl port-forward -n geo-redis service/geo-node-0 4000:4000
 
 # Trigger a geographic split
-kubectl exec -n proxima deploy/geo-node-1 -- \
+kubectl exec -n geo-redis deploy/geo-node-1 -- \
   curl -X POST http://geo-node-1:4001/split \
              -H 'Content-Type: application/json' \
        -d '{"target":"geo-node-3:4003","split_point":"7"}'

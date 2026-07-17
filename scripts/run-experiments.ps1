@@ -1,4 +1,4 @@
-# proxima — experiment runner
+# geo-redis — experiment runner
 #
 # Starts Redis if needed, builds the experiment binary, runs all 5 experiments
 # and saves output to target/experiment-results-{timestamp}.txt

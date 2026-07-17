@@ -58,7 +58,7 @@ public class TerminatorCalculator : BackgroundService
             var now = DateTime.UtcNow;
             var coords = CalculateTerminatorCoordinates(now);
 
-            // Store each point of the terminator line in proxima
+            // Store each point of the terminator line in geo-redis
             var batchRequest = new InsertBatchRequest();
             
             for (int i = 0; i < coords.Count; i++)

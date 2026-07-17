@@ -1,4 +1,4 @@
-# proxima — unified demo launcher
+# geo-redis — unified demo launcher
 #
 # Starts ALL demo components in one command:
 #
