@@ -1,16 +1,16 @@
 # Earthquake Tracker Demo — Quick Start Guide
 
-This guide walks you through running the earthquake demo standalone or with the full proxima stack.
+This guide walks you through running the earthquake demo standalone or with the full geo-redis stack.
 
 ## Prerequisites
 
 - .NET 8 SDK: https://dotnet.microsoft.com/download
 - Node.js 24+: https://nodejs.org
-- A running proxima geo-node (see below)
+- A running geo-redis geo-node (see below)
 
 ## Option 1: Standalone (Simplest)
 
-### Step 1: Start a proxima geo-node
+### Step 1: Start a geo-redis geo-node
 
 You need a geo-node running on port 3000 for the .NET client to connect to.
 
@@ -32,7 +32,7 @@ dotnet run
 ```
 
 The server will:
-- Connect to proxima geo-node at `http://localhost:3000`
+- Connect to geo-redis geo-node at `http://localhost:3000`
 - Fetch earthquakes from USGS every 5 minutes
 - Insert them via gRPC `InsertBatch`
 - Expose REST API at `http://localhost:3003`
@@ -115,7 +115,7 @@ Navigate to **http://localhost:5175** and you should see:
 
 ### "gRPC client not initialized"
 
-The .NET server can't connect to the proxima geo-node. Make sure:
+The .NET server can't connect to the geo-redis geo-node. Make sure:
 - A geo-node is running on `http://localhost:3000`
 - Check `appsettings.json` has the correct `GeoRedis:Url`
 

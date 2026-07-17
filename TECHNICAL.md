@@ -1,9 +1,9 @@
-# Proxima — Technical Design Document
+# geo-redis — Technical Design Document
 
 **Status:** Draft v0.1 — benchmark harnesses are checked in; no published results have been independently reproduced
-**Scope:** Core library (`proxima`), distributed geo-node daemon, split/merge protocol
+**Scope:** Core library (`geo-redis`), distributed geo-node daemon, split/merge protocol
 
-> **Product framing:** Proxima is a distributed geospatial cache for sub-millisecond reads and multi-million entity storage, backed by any managed Redis instance. Each shard is a stateless Rust service with its own dedicated Redis — a $50/month managed Redis per region supports ~6 million entities. Shards split without downtime as load grows.
+> **Product framing:** geo-redis is a distributed geospatial cache for sub-millisecond reads and multi-million entity storage, backed by any managed Redis instance. Each shard is a stateless Rust service with its own dedicated Redis — a $50/month managed Redis per region supports ~6 million entities. Shards split without downtime as load grows.
 
 ---
 
@@ -18,7 +18,7 @@ Redis Cluster's own geo commands (`GEOADD`/`GEORADIUS`) are single-node only for
 
 Tile38 solves the single-node problem with Raft replication but has no horizontal split protocol — a single node must hold all data for a geographic region.
 
-**Proxima's thesis:** S2 cell token strings form a total order that respects geographic locality. Using the token string as both the Redis key suffix and the shard routing key allows shard boundaries to be pure lexicographic prefix comparisons. Splits require no data reshuffle — only a bounded catch-up window, and each shard's Redis instance is completely independent.
+**geo-redis's thesis:** S2 cell token strings form a total order that respects geographic locality. Using the token string as both the Redis key suffix and the shard routing key allows shard boundaries to be pure lexicographic prefix comparisons. Splits require no data reshuffle — only a bounded catch-up window, and each shard's Redis instance is completely independent.
 
 ### One Redis per shard — not shared
 
@@ -340,9 +340,9 @@ proxima_key_count / avg(proxima_key_count)
 For latency without network noise, use the Criterion suite in `lib/benches/`:
 
 ```bash
-cargo bench -p proxima                        # run all benches
-cargo bench -p proxima -- --save-baseline v1  # save baseline
-cargo bench -p proxima -- --baseline v1       # compare to baseline
+cargo bench -p geo-redis                        # run all benches
+cargo bench -p geo-redis -- --save-baseline v1  # save baseline
+cargo bench -p geo-redis -- --baseline v1       # compare to baseline
 ```
 
 ---
@@ -391,7 +391,7 @@ It is a lower bound on Redis I/O cost, not a drop-in production alternative.
 | Toolchain | Rust 1.97.0; release build |
 | Redis | Redis 7.4.9, `redis:7-alpine`, Docker Desktop 29.6.1, `noeviction`, AOF disabled, snapshots disabled |
 | Topology | One Docker Compose Redis container at `127.0.0.1:6379`; loopback; database 15 flushed before the run |
-| Commands | `cargo bench -p proxima` · `.\scripts\run-experiments.ps1 -Redis 'redis://127.0.0.1:6379/15'` |
+| Commands | `cargo bench -p geo-redis` · `.\scripts\run-experiments.ps1 -Redis 'redis://127.0.0.1:6379/15'` |
 | Raw outputs | `target/experiment-results-20260712-175628.txt`; Criterion HTML in `target/criterion/` |
 
 ### 8.2 In-process Criterion results
@@ -458,7 +458,7 @@ with `demo/geo-node`), differing only in the region-query implementation:
 
 - **naive-redis** — `SUNION` over the covering S2 cell keys, then a pipelined
   `GET` of every entity. One or more Redis round-trips per query.
-- **trie** — proxima's in-memory `GeoTrie` walked by the S2 viewport tokens.
+- **trie** — geo-redis's in-memory `GeoTrie` walked by the S2 viewport tokens.
   No Redis round-trip.
 
 40,000 entities (uniform random lat/lon), 1,500 timed queries, ±5° viewports,
@@ -488,7 +488,7 @@ cargo run -p proxima-grpc-bench --release -- --entities 40000 --queries 1500
 ### 8.6 Reproduction
 
 ```powershell
-cargo bench -p proxima
+cargo bench -p geo-redis
 .\scripts\run-experiments.ps1 -Redis 'redis://127.0.0.1:6379/15'
 ```
 
@@ -502,14 +502,14 @@ as HTTP, cross-host, or managed-service latency.
 
 | System | Geo sharding | Split protocol | Sub-10ms reads | Written in |
 |---|---|---|---|---|
-| **Proxima** | S2 token prefix | snapshot + bounded delta-sync | ✓ | Rust |
+| **geo-redis** | S2 token prefix | snapshot + bounded delta-sync | ✓ | Rust |
 | Redis Cluster | Consistent hash (keyslot) | MIGRATE (blocking) | ✓ | C |
 | Tile38 | None (single-node Raft) | N/A | ✓ | Go |
 | PostGIS | None | N/A | ✗ (10–100ms) | C |
 | MongoDB geo | Zone sharding | Chunk migration | ✗ | C++ |
 | H3/S2 libs | Index only, no runtime | N/A | N/A | Various |
 
-**Proxima's unique position:** the only system where the spatial index key *is* the shard routing key, making shard boundaries metadata-only operations and bounding split downtime to `snapshot_transfer_time + one_network_RTT`.
+**geo-redis's unique position:** the only system where the spatial index key *is* the shard routing key, making shard boundaries metadata-only operations and bounding split downtime to `snapshot_transfer_time + one_network_RTT`.
 
 ---
 

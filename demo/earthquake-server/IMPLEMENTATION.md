@@ -2,7 +2,7 @@
 
 ## Overview
 
-A complete cross-platform .NET 8 demo showcasing proxima's gRPC API with real-time earthquake data from USGS.
+A complete cross-platform .NET 8 demo showcasing geo-redis's gRPC API with real-time earthquake data from USGS.
 
 ## What Was Built
 
@@ -37,7 +37,7 @@ A complete cross-platform .NET 8 demo showcasing proxima's gRPC API with real-ti
 2. `GET /api/region` — Bounding box query (gRPC)
 3. `GET /api/earthquake/{id}` — Detail by ID (gRPC)
 4. `GET /api/metrics` — Statistics
-5. `GET /api/cluster` — Proxima topology (gRPC)
+5. `GET /api/cluster` — geo-redis topology (gRPC)
 6. `GET /health` — Health check
 
 ### 2. React + Leaflet UI (`demo/ui/`)
@@ -95,7 +95,7 @@ A complete cross-platform .NET 8 demo showcasing proxima's gRPC API with real-ti
          │ gRPC InsertBatch
          ▼
 ┌─────────────────┐
-│  proxima node   │  (S2 trie + Redis)
+│  geo-redis node │  (S2 trie + Redis)
 └────────┬────────┘
          │ gRPC QueryRegion
          ▼
@@ -127,7 +127,7 @@ A complete cross-platform .NET 8 demo showcasing proxima's gRPC API with real-ti
 ## How to Run
 
 ### Full Stack
-1. Start proxima geo-node: `cd demo/server && cargo run`
+1. Start geo-redis geo-node: `cd demo/server && cargo run`
 2. Start .NET server: `cd demo/earthquake-server && dotnet run`
 3. Start UI: `cd demo/ui && npm run dev:earthquake`
 4. Open: http://localhost:5175

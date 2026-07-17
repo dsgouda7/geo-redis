@@ -1,4 +1,4 @@
-# Contributing to proxima
+# Contributing to geo-redis
 
 Thank you for taking the time to contribute.
 
@@ -43,7 +43,7 @@ Thank you for taking the time to contribute.
 
 ## Current maturity
 
-proxima is **experimental**. The core library and single-node demo are production-ready;
+geo-redis is **experimental**. The core library and single-node demo are production-ready;
 the distributed split/merge protocol is functional but lacks a consensus layer — see
 [TECHNICAL.md §5.3](TECHNICAL.md) for the documented gap.
 

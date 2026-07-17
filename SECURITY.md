@@ -7,14 +7,14 @@
 | main (HEAD) | ✓ |
 | older tags | ✗ |
 
-proxima is pre-1.0 and does not yet make backward-compatibility guarantees between releases.
+geo-redis is pre-1.0 and does not yet make backward-compatibility guarantees between releases.
 
 ## Reporting a vulnerability
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
 Email **security@proxima-geo.io** (or the repository owner's contact in the GitHub profile)
-with the subject line `[proxima] Security vulnerability report`. Include:
+with the subject line `[geo-redis] Security vulnerability report`. Include:
 
 - A description of the vulnerability and its potential impact
 - Steps to reproduce (proof-of-concept code if available)

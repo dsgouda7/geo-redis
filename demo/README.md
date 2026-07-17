@@ -1,6 +1,6 @@
-# proxima — demo suite
+# geo-redis — demo suite
 
-Four live demo applications that exercise every layer of the proxima stack:  
+Four live demo applications that exercise every layer of the geo-redis stack:  
 real-time ingest, S2 spatial indexing, SSE streaming, distributed shard management, and split/merge orchestration.
 
 ---
@@ -75,7 +75,7 @@ Global weather conditions streamed from the [FAA/NWS METAR bulk feed](https://av
 
 ## Demo 3 — USGS Earthquake Tracker (`demo/earthquake-server` · `demo/ui`)
 
-Real-time earthquake visualization using USGS GeoJSON feeds — **powered by .NET 8 + gRPC** to showcase cross-platform proxima integration.
+Real-time earthquake visualization using USGS GeoJSON feeds — **powered by .NET 8 + gRPC** to showcase cross-platform geo-redis integration.
 
 **What it shows:**
 - 100–500 recent earthquakes (past 24 hours, magnitude ≥ 2.5) ingested via **gRPC `InsertBatch`**
@@ -170,7 +170,7 @@ cargo run -p proxima-loadtest --release -- --target http://localhost:4000 --rps 
 
 Head-to-head comparison of two geo-cache strategies measured **over real gRPC**:
 a naive Redis cache (`SUNION` over S2 cell sets + pipelined `GET`) versus
-proxima's in-memory trie-based cache. Both backends sit behind the same
+geo-redis's in-memory trie-based cache. Both backends sit behind the same
 hand-rolled gRPC service, so the latency delta reflects the cache strategy, not
 the transport. Requires a local Redis (`docker compose up -d` in `demo/`); the
 Redis backend is skipped with a warning if none is reachable.

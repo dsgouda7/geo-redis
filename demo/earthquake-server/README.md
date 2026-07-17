@@ -1,6 +1,6 @@
 # Earthquake Real-Time Tracker — .NET + gRPC + USGS
 
-A cross-platform .NET 8 demo showcasing **proxima's gRPC API** with real-time earthquake data from the [USGS Earthquake Hazards Program](https://earthquake.usgs.gov/).
+A cross-platform .NET 8 demo showcasing **geo-redis's gRPC API** with real-time earthquake data from the [USGS Earthquake Hazards Program](https://earthquake.usgs.gov/).
 
 ## Features
 
@@ -15,7 +15,7 @@ A cross-platform .NET 8 demo showcasing **proxima's gRPC API** with real-time ea
 ### Prerequisites
 
 - .NET 8 SDK or later
-- Running proxima geo-node (see main demo instructions)
+- Running geo-redis geo-node (see main demo instructions)
 
 ### Run the Server
 
@@ -43,7 +43,7 @@ The server starts on `http://localhost:3003` and immediately begins polling USGS
 | `GET /api/region?s=30&w=-120&n=50&e=-100` | Query earthquakes in bounding box (via gRPC) |
 | `GET /api/earthquake/{id}` | Get detail for specific earthquake (via gRPC) |
 | `GET /api/metrics` | Earthquake counts by magnitude range |
-| `GET /api/cluster` | Proxima cluster topology (via gRPC) |
+| `GET /api/cluster` | geo-redis cluster topology (via gRPC) |
 | `GET /health` | Health check (staleness indicator) |
 | `GET /swagger` | Interactive API documentation |
 
@@ -136,7 +136,7 @@ var results = await client.QueryRegionAsync(region);
            │ gRPC InsertBatch
            ▼
 ┌─────────────────────┐
-│  proxima geo-node   │  (S2 spatial trie + Redis)
+│  geo-redis geo-node  │  (S2 spatial trie + Redis)
 └──────────┬──────────┘
            │ gRPC QueryRegion
            ▼

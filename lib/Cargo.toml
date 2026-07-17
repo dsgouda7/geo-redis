@@ -6,8 +6,8 @@ description = "S2-geometry-keyed distributed geospatial trie with Redis persiste
 repository  = "https://github.com/dsgouda7/geo-redis"
 license     = "MIT"
 readme      = "../README.md"
-keywords    = ["geo", "s2", "redis", "distributed", "spatial"]
-categories  = ["data-structures", "database"]
+keywords    = ["geospatial", "s2-geometry", "redis", "spatial-index", "cache"]
+categories  = ["data-structures", "database", "caching", "network-programming"]
 
 [dependencies]
 s2            = "0.0.10"

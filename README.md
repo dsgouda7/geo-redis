@@ -1,4 +1,4 @@
-# proxima
+# geo-redis
 
 **A distributed geospatial cache for moving objects — aircraft, couriers, IoT devices, and anything else with a latitude and longitude — backed by Redis.**
 
@@ -18,7 +18,7 @@ Three independent demos ship with the repository, each showing a different angle
 
 ### 📻 Radio Explorer — 30 000 streams indexed locally, play any channel in one click
 
-The most striking demonstration of proxima's storage efficiency: **12 500+ geo-tagged live radio streams** from [Radio Browser](https://www.radio-browser.info) are fetched from a public API, inserted into the S2 trie entirely in-memory (no Redis, no database), and served back at any zoom level in under a millisecond.
+The most striking demonstration of geo-redis's storage efficiency: **12 500+ geo-tagged live radio streams** from [Radio Browser](https://www.radio-browser.info) are fetched from a public API, inserted into the S2 trie entirely in-memory (no Redis, no database), and served back at any zoom level in under a millisecond.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -226,7 +226,7 @@ flowchart LR
         OS["OpenSky Network\n(aircraft)"]
         Delivery["Your App\n(couriers / IoT)"]
     end
-    subgraph proxima
+    subgraph geo-redis
         Poller["Poller\nevery 30s"]
         Trie["In-Memory S2 Trie"]
         Store["RedisStore"]
@@ -499,13 +499,13 @@ See [Benchmark Coverage](#benchmark-coverage) for the current comparative
 results including the naive-flat baseline. Run benchmarks with:
 
 ```bash
-cargo bench -p proxima                              # Criterion suite (in-process)
+cargo bench -p geo-redis                              # Criterion suite (in-process)
 .\scripts\run-experiments.ps1 -Redis 'redis://...'  # Redis experiment suite
 ```
 
 ---
 
-## Why proxima vs alternatives
+## Why geo-redis vs alternatives
 
 ### tl;dr
 
@@ -513,13 +513,13 @@ Every other option in this space makes a write-frequency tradeoff that breaks do
 
 ```
 Traditional spatial DB:  optimised for complex queries on stable data
-proxima:                 optimised for moving entities, backed by Redis,
+geo-redis:               optimised for moving entities, backed by Redis,
                          with operator-driven geographic shard changes
 ```
 
 ### Detailed comparison
 
-| | **proxima** | Redis GEO | PostGIS | Elasticsearch | Tile38 |
+| | **geo-redis** | Redis GEO | PostGIS | Elasticsearch | Tile38 |
 |---|---|---|---|---|---|
 | **Published workload benchmark** | Not yet published | Varies by deployment | Varies by deployment | Varies by deployment | Varies by deployment |
 | **Geo sharding** | Geographic locality | Hash slot | Manual | Auto (non-geo) | None |
@@ -538,7 +538,7 @@ S2 cells have **equal area** regardless of latitude and **no antimeridian discon
 
 PostGIS is the gold standard for analytical queries on *static or slowly-changing* geographic data. For `UPDATE SET lat=$1, lon=$2 WHERE id=$3` happening 11,000 times every 30 seconds, PostgreSQL's MVCC creates 11,000 dead row versions that autovacuum must reclaim. The GiST spatial index needs to rebalance. You can mitigate this with `geom = ST_SetSRID(ST_Point($lon, $lat), 4326)` updates and partial indexes, but you're fighting the engine's design.
 
-proxima replaces each entity atomically via `SET ... EX 120` — Redis's O(1) string operation.
+geo-redis replaces each entity atomically via `SET ... EX 120` — Redis's O(1) string operation.
 
 #### vs Elasticsearch geo_point
 
@@ -548,9 +548,9 @@ Elasticsearch's refresh interval means **there is a 200–1000ms lag** between w
 
 Tile38 is the closest competitor — a purpose-built real-time geo database. Key differences:
 
-- Tile38 uses a flat R-tree; proxima uses a **trie over S2 tokens**, enabling O(token_len) prefix queries that Tile38 can't do efficiently.
+- Tile38 uses a flat R-tree; geo-redis uses a **trie over S2 tokens**, enabling O(token_len) prefix queries that Tile38 can't do efficiently.
 - Tile38 has no distributed sharding. One server must hold all data for a geographic region with no zero-downtime scale-out path.
-- Tile38 is written in Go; proxima is Rust — no GC pauses during heavy write cycles.
+- Tile38 is written in Go; geo-redis is Rust — no GC pauses during heavy write cycles.
 - Tile38 has no position history.
 
 ---
@@ -606,7 +606,7 @@ Tile38 is the closest competitor — a purpose-built real-time geo database. Key
 ## Repository layout
 
 ```
-proxima/
+geo-redis/
 ├── lib/                   # Core Rust library (publish to crates.io)
 │   ├── src/
 │   │   ├── trie.rs        # S2-keyed trie — O(token_len) insert + lookup + range-remove
