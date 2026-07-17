@@ -9,7 +9,7 @@ name = "cluster-test"
 path = "src/main.rs"
 
 [dependencies]
-proxima             = { path = "../../lib" }
+proxima             = { package = "geo-redis", path = "../../lib" }
 tokio               = { version = "1", features = ["full"] }
 serde_json          = "1"
 anyhow              = "1"

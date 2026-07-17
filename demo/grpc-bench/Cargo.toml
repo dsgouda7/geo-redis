@@ -9,7 +9,7 @@ name = "proxima-grpc-bench"
 path = "src/main.rs"
 
 [dependencies]
-proxima      = { path = "../../lib" }
+proxima      = { package = "geo-redis", path = "../../lib" }
 tokio        = { version = "1", features = ["full"] }
 tonic        = { version = "0.11", features = ["codegen", "transport"] }
 prost        = "0.12"

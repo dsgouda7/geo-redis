@@ -6,8 +6,8 @@ The core idea: index every entity by its [Google S2](https://s2geometry.io/) cel
 
 > **Maturity:** The core library and single-node demo are production-ready. Distributed range changes fail closed unless an etcd v3 metadata authority is configured. etcd transactionally records each range owner through its Raft quorum; Redis is not used for topology authority.
 
-[![CI](https://github.com/dsgouda7/proxima/actions/workflows/ci.yml/badge.svg)](https://github.com/dsgouda7/proxima/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/proxima.svg)](https://crates.io/crates/proxima)
+[![CI](https://github.com/dsgouda7/geo-redis/actions/workflows/ci.yml/badge.svg)](https://github.com/dsgouda7/geo-redis/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/geo-redis.svg)](https://crates.io/crates/geo-redis)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
@@ -46,7 +46,7 @@ cd demo/ui && npm run dev:radio     # → http://localhost:5176
 - **Leaf marker (zoom ≥ 8)** — glowing indigo border indicates it is interactive. Click to open the station flyout.
 - **Flyout** — scrollable list sorted by community votes; search by name, genre, or country; one ▶ / ⏹ per station; playing a new stream auto-stops the previous one.
 
-![Radio Explorer — 12 500+ stations clustered by S2 cell, playable in-browser](https://raw.githubusercontent.com/dsgouda7/proxima/main/docs/screenshots/demo-radio.png)
+![Radio Explorer — 12 500+ stations clustered by S2 cell, playable in-browser](https://raw.githubusercontent.com/dsgouda7/geo-redis/main/docs/screenshots/demo-radio.png)
 
 ---
 
@@ -60,7 +60,7 @@ Polls [OpenSky Network](https://opensky-network.org) every 30 s and stores posit
 # → http://localhost:5173
 ```
 
-![Aircraft Tracker — 7 000+ live flights indexed by S2 trie, altitude-coded by colour](https://raw.githubusercontent.com/dsgouda7/proxima/main/docs/screenshots/demo-aircraft.png)
+![Aircraft Tracker — 7 000+ live flights indexed by S2 trie, altitude-coded by colour](https://raw.githubusercontent.com/dsgouda7/geo-redis/main/docs/screenshots/demo-aircraft.png)
 
 ---
 
@@ -73,7 +73,7 @@ cargo run -p proxima-weather        # → http://localhost:3000 (or $SERVER_PORT
 cd demo/ui && npm run dev:weather   # → http://localhost:5174
 ```
 
-![Live Weather — METAR clusters colour-coded by temperature; individual station drill-down at zoom 10+](https://raw.githubusercontent.com/dsgouda7/proxima/main/docs/screenshots/demo-weather.png)
+![Live Weather — METAR clusters colour-coded by temperature; individual station drill-down at zoom 10+](https://raw.githubusercontent.com/dsgouda7/geo-redis/main/docs/screenshots/demo-weather.png)
 
 ---
 
@@ -89,7 +89,7 @@ cd demo/earthquake-server && dotnet run   # → http://localhost:3003
 cd demo/ui && npm run dev:earthquake      # → http://localhost:5175/index.earthquake.html
 ```
 
-![Satellite Tracker — 201 satellites with day/night terminator, colour-coded by category](https://raw.githubusercontent.com/dsgouda7/proxima/main/docs/screenshots/demo-satellite.png)
+![Satellite Tracker — 201 satellites with day/night terminator, colour-coded by category](https://raw.githubusercontent.com/dsgouda7/geo-redis/main/docs/screenshots/demo-satellite.png)
 
 ---
 
@@ -105,7 +105,7 @@ docker compose -f demo/cluster-compose.yml up -d
 cd demo/cluster-ui && npm run dev          # → http://localhost:5176
 ```
 
-![Cluster Monitor — S2 token-ring topology and key distribution across 4 geo-node shards](https://raw.githubusercontent.com/dsgouda7/proxima/main/docs/screenshots/demo-cluster.png)
+![Cluster Monitor — S2 token-ring topology and key distribution across 4 geo-node shards](https://raw.githubusercontent.com/dsgouda7/geo-redis/main/docs/screenshots/demo-cluster.png)
 
 ---
 
