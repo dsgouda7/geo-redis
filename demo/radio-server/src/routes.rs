@@ -11,8 +11,13 @@ use std::{sync::Arc, time::Instant};
 
 #[derive(Serialize)]
 pub struct RadioResponse {
-    count:    usize,
-    aircraft: Vec<GeoEntry>,   // "aircraft" key keeps the UI schema unchanged
+    count:             usize,
+    /// Wall-clock duration of the trie query in milliseconds.
+    /// For region queries this covers: lock acquisition + trie walk + viewport filter.
+    /// For nearby queries this covers: lock acquisition + cap covering + trie walk + haversine filter + sort.
+    /// Compare the two to isolate the haversine + sort overhead.
+    query_duration_ms: f64,
+    aircraft:          Vec<GeoEntry>,
 }
 
 // ── Query param structs ────────────────────────────────────────────────────
@@ -75,6 +80,7 @@ pub async fn all_clusters(
     let level = aggregate::zoom_to_s2_level(zoom);
     let is_leaf = zoom >= aggregate::LEAF_ZOOM;
 
+    let start = Instant::now();
     let clusters = st.clusters.read().await;
     let tier = clusters.get(&level).cloned().unwrap_or_default();
     drop(clusters);
@@ -84,9 +90,8 @@ pub async fn all_clusters(
         .map(|c| cluster_to_entry(c, is_leaf))
         .collect();
     let count = aircraft.len();
-    Json(RadioResponse { count, aircraft })
+    Json(RadioResponse { count, query_duration_ms: start.elapsed().as_micros() as f64 / 1_000.0, aircraft })
 }
-
 /// GET /api/region?s=&w=&n=&e=&zoom=N
 /// Returns clusters whose centroid falls within the viewport.
 pub async fn region_clusters(
@@ -97,7 +102,9 @@ pub async fn region_clusters(
     let level = aggregate::zoom_to_s2_level(zoom);
     let is_leaf = zoom >= aggregate::LEAF_ZOOM;
 
+    // Timer starts after lock acquisition to measure pure query time.
     let clusters = st.clusters.read().await;
+    let start = Instant::now();
     let tier = clusters.get(&level).cloned().unwrap_or_default();
     drop(clusters);
 
@@ -107,7 +114,7 @@ pub async fn region_clusters(
         .map(|c| cluster_to_entry(c, is_leaf))
         .collect();
     let count = aircraft.len();
-    Json(RadioResponse { count, aircraft })
+    Json(RadioResponse { count, query_duration_ms: start.elapsed().as_micros() as f64 / 1_000.0, aircraft })
 }
 
 /// GET /api/metrics
@@ -186,8 +193,10 @@ pub async fn nearby_stations(
     State(st): State<Arc<AppState>>,
     Query(p): Query<NearbyParams>,
 ) -> Json<NearbyResponse> {
-    let start = Instant::now();
+    // Lock acquired first — timer starts after so we measure pure query time,
+    // not lock contention under concurrent requests.
     let trie = st.nearby_trie.read().await;
+    let start = Instant::now();
     let results = trie.query_nearby(p.lat, p.lon, p.radius_m, Some(p.limit));
     let elapsed_us = start.elapsed().as_micros() as u64;
 

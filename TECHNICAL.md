@@ -260,6 +260,16 @@ The `Metrics` struct (per `RedisStore` instance) now uses **HDR histograms** bac
 
 **Interpreting nearby vs read latency:** `query_nearby` runs the same Redis pipeline as `query_region` (SUNION + pipelined GET) and then adds an O(candidates) haversine filter and sort. At typical viewport densities (10–200 candidates) the post-processing is sub-millisecond in-process, so `nearby_p50` should stay within ~1–2 ms of `read_p50`. Divergence beyond that indicates a very large candidate set — reduce `radius_m` or lower the S2 level.
 
+**Measured (radio demo, 12,648 in-memory stations, Windows loopback, 2026-07-20):**
+
+| Operation | avg server-side | Notes |
+|---|---|---|
+| `query_nearby` 200 km radius | **1.45 ms** | S2 cap covering + level-9 trie walk + haversine + sort |
+| `query_region` zoom=7 (level-4 clusters) | **0.18 ms** | Pre-aggregated tier lookup + bbox filter only |
+| `query_region` zoom=9 (leaf + station lists) | **12 ms** | Dominated by cloning 855 `Vec<StationInfo>` payloads |
+
+The ~1.27 ms gap between nearby and a plain tier query is attributable to S2 cap covering computation and traversing the fine-grained level-9 trie, **not** to haversine arithmetic. The cap covering is the more expensive step; haversine over 17 candidates is < 5 µs.
+
 The geo-node exposes these plus Redis `DBSIZE` and `INFO memory` at `GET /metrics/prom` in Prometheus text format under the `geo-redis_*` namespace.
 
 ### 7.2 Additional metrics to add for production
